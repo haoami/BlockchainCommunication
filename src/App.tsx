@@ -5,7 +5,7 @@ import "./App.css";
 import type { RelayNode, IDecoder } from "@waku/interfaces";
 import { createDecoder as createSymmetricDecoder } from "@waku/message-encryption/symmetric";
 import { createDecoder, DecodedMessage } from "@waku/message-encryption/ecies";
-import { KeyPair, PublicKeyMessageEncryptionKey } from "./crypto";
+import { KeyPair, PublicKeyMessageEncryptionKey } from "./wakuCrypto";
 import { Message } from "./messaging/Messages";
 import "fontsource-roboto";
 import { AppBar, IconButton, Toolbar, Typography } from "@material-ui/core";
@@ -28,6 +28,8 @@ import {
 } from "./waku";
 import { Web3Provider } from "@ethersproject/providers/src.ts/web3-provider";
 import ConnectWallet from "./ConnectWallet";
+import {PublicKeyMessageObj} from "./waku";
+
 
 const theme = createMuiTheme({
   palette: {
@@ -73,9 +75,10 @@ function App() {
   const [encryptionKeyPair, setEncryptionKeyPair] = useState<
     KeyPair | undefined
   >();
+
   const [privateMessageDecoder, setPrivateMessageDecoder] =
     useState<IDecoder<DecodedMessage>>();
-  const [publicKeys, setPublicKeys] = useState<Map<string, Uint8Array>>(
+  const [publicKeys, setPublicKeys] = useState<Map<string, PublicKeyMessageObj>>(
     new Map()
   );
   const [messages, setMessages] = useState<Message[]>([]);
@@ -146,6 +149,7 @@ function App() {
 
     const observerPrivateMessage = handlePrivateMessage.bind(
       {},
+      setPublicKeys,
       setMessages,
       address
     );
@@ -198,7 +202,7 @@ function App() {
               (Relay) Peers: {peerStats.relayPeers}
             </Typography>
             <Typography variant="h6" className={classes.title}>
-              Ethereum Private Message
+            Blockchain covert communication(by kk/ay/f0)
             </Typography>
             <Typography>{addressDisplay}</Typography>
           </Toolbar>
@@ -232,6 +236,9 @@ function App() {
                 recipients={publicKeys}
                 waku={waku}
                 messages={messages}
+                publicKey={encryptionKeyPair?.publicKey}
+                address={address}
+                signer={provider?.getSigner()}
               />
             </fieldset>
           </main>

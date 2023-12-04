@@ -1,4 +1,4 @@
-import { KeyPair } from "../crypto";
+import { KeyPair } from "../wakuCrypto";
 import { bytesToHex, hexToBytes } from "@waku/utils/bytes";
 
 /**

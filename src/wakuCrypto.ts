@@ -7,6 +7,8 @@ import { keccak256, _TypedDataEncoder, recoverAddress } from "ethers/lib/utils";
 import { equals } from "uint8arrays/equals";
 import type { TypedDataSigner } from "@ethersproject/abstract-signer";
 import { bytesToHex, hexToBytes, utf8ToBytes } from "@waku/utils/bytes";
+import { pbkdf2 } from 'pbkdf2';
+
 
 export const PublicKeyMessageEncryptionKey = hexToBytes(
   keccak256(utf8ToBytes(PublicKeyContentTopic))
@@ -34,22 +36,25 @@ export async function generateEncryptionKeyPair(): Promise<KeyPair> {
 export async function createPublicKeyMessage(
   address: string,
   encryptionPublicKey: Uint8Array,
+  randomSeed: Uint8Array,
   signer: TypedDataSigner
 ): Promise<PublicKeyMessage> {
   const signature = await signEncryptionKey(
     encryptionPublicKey,
     address,
+    randomSeed,
     signer
   );
 
   return new PublicKeyMessage({
     encryptionPublicKey: encryptionPublicKey,
     ethAddress: hexToBytes(address),
+    randomSeed: randomSeed,
     signature: hexToBytes(signature),
   });
 }
 
-function buildMsgParams(encryptionPublicKey: Uint8Array, fromAddress: string) {
+function buildMsgParams(encryptionPublicKey: Uint8Array, fromAddress: string, randomSeed: Uint8Array) {
   return {
     domain: {
       name: "Ethereum Private Message over Waku",
@@ -60,6 +65,7 @@ function buildMsgParams(encryptionPublicKey: Uint8Array, fromAddress: string) {
         "By signing this message you certify that messages addressed to `ownerAddress` must be encrypted with `encryptionPublicKey`",
       encryptionPublicKey: bytesToHex(encryptionPublicKey),
       ownerAddress: fromAddress,
+      randomSeed: bytesToHex(randomSeed),
     },
     // Refers to the keys of the *types* object below.
     primaryType: "PublishEncryptionPublicKey",
@@ -68,6 +74,7 @@ function buildMsgParams(encryptionPublicKey: Uint8Array, fromAddress: string) {
         { name: "message", type: "string" },
         { name: "encryptionPublicKey", type: "string" },
         { name: "ownerAddress", type: "string" },
+        { name: "randomSeed", type: "string"}
       ],
     },
   };
@@ -76,11 +83,13 @@ function buildMsgParams(encryptionPublicKey: Uint8Array, fromAddress: string) {
 export async function signEncryptionKey(
   encryptionPublicKey: Uint8Array,
   fromAddress: string,
+  randomSeed: Uint8Array,
   signer: TypedDataSigner
 ): Promise<Uint8Array> {
   const { domain, types, value } = buildMsgParams(
     encryptionPublicKey,
-    fromAddress
+    fromAddress,
+    randomSeed
   );
 
   const result = await signer._signTypedData(domain, types, value);
@@ -96,7 +105,8 @@ export async function signEncryptionKey(
 export function validatePublicKeyMessage(msg: PublicKeyMessage): boolean {
   const { domain, types, value } = buildMsgParams(
     msg.encryptionPublicKey,
-    "0x" + bytesToHex(msg.ethAddress)
+    "0x" + bytesToHex(msg.ethAddress),
+    msg.randomSeed
   );
 
   try {
@@ -111,4 +121,33 @@ export function validatePublicKeyMessage(msg: PublicKeyMessage): boolean {
     console.error("Could not recover public key from signature", e);
     return false;
   }
+}
+
+/**
+ * derive key using pbkdf2.
+ */
+export async function generateDeriveKey(password: string, salt: string): Promise<Uint8Array> {
+  const iterations = 50000;
+  const keylen = 65;
+  const digest = 'sha256';
+
+  return new Promise((resolve, reject) => {
+    pbkdf2(password, salt, iterations, keylen, digest, (err, derivedKey) => {
+      if (err) {
+        console.warn(err);
+        reject(err);
+      } else {
+        resolve(derivedKey);
+      }
+    });
+  });
+}
+
+/**
+ * Generate random num bytes salt
+ */
+export function genRandomBytes(num: number){
+    const randomBytes = new Uint8Array(num);
+    window.crypto.getRandomValues(randomBytes);
+    return randomBytes;
 }

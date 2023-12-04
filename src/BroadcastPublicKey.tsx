@@ -2,13 +2,14 @@ import { Button } from "@material-ui/core";
 import React, { useState } from "react";
 import {
   createPublicKeyMessage,
+  genRandomBytes,
   KeyPair,
   PublicKeyMessageEncryptionKey,
-} from "./crypto";
+} from "./wakuCrypto";
 import { PublicKeyMessage } from "./messaging/wire";
 import type { RelayNode } from "@waku/interfaces";
 import { createEncoder } from "@waku/message-encryption/symmetric";
-import { PublicKeyContentTopic } from "./waku";
+import { PublicKeyContentTopic} from "./waku";
 import type { TypedDataSigner } from "@ethersproject/abstract-signer";
 
 interface Props {
@@ -25,8 +26,10 @@ export default function BroadcastPublicKey({
   signer,
 }: Props) {
   const [publicKeyMsg, setPublicKeyMsg] = useState<PublicKeyMessage>();
+  
 
   const broadcastPublicKey = async () => {
+    
     if (!encryptionKeyPair) return;
     if (!address) return;
     if (!waku) return;
@@ -37,19 +40,21 @@ export default function BroadcastPublicKey({
         const pkm = await createPublicKeyMessage(
           address,
           encryptionKeyPair.publicKey,
+          new Uint8Array(32),
           signer
         );
 
         setPublicKeyMsg(pkm);
         return pkm;
       }
-      return publicKeyMsg;
+    return publicKeyMsg;
     })();
-    const payload = _publicKeyMessage.encode();
+    const payload = _publicKeyMessage.encode(); // protobuf encode
+    console.log(payload);
 
     const publicKeyMessageEncoder = createEncoder({
       contentTopic: PublicKeyContentTopic,
-      symKey: PublicKeyMessageEncryptionKey,
+      symKey: PublicKeyMessageEncryptionKey, // keccak256(topic)
       ephemeral: true,
     });
 

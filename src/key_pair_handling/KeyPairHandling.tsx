@@ -2,7 +2,7 @@ import { Button } from "@material-ui/core";
 import { LoadKeyPair } from "./LoadKeyPair";
 import { SaveKeyPair } from "./SaveKeyPair";
 import React, { useState } from "react";
-import { generateEncryptionKeyPair, KeyPair } from "../crypto";
+import { generateEncryptionKeyPair, KeyPair } from "../wakuCrypto";
 import { makeStyles } from "@material-ui/core/styles";
 import PasswordInput from "./PasswordInput";
 

@@ -3,6 +3,7 @@ import * as protobuf from "protobufjs/light";
 export interface PublicKeyMessagePayload {
   encryptionPublicKey: Uint8Array;
   ethAddress: Uint8Array;
+  randomSeed: Uint8Array;
   signature: Uint8Array;
 }
 
@@ -17,7 +18,8 @@ export class PublicKeyMessage {
   private static Type = new Type("PublicKeyMessage")
     .add(new Field("encryptionPublicKey", 1, "bytes"))
     .add(new Field("ethAddress", 2, "bytes"))
-    .add(new Field("signature", 3, "bytes"));
+    .add(new Field("randomSeed", 3, "bytes"))
+    .add(new Field("signature", 4, "bytes"));
   private static Root = new Root()
     .define("messages")
     .add(PublicKeyMessage.Type);
@@ -52,6 +54,10 @@ export class PublicKeyMessage {
     return this.payload.ethAddress;
   }
 
+  get randomSeed(): Uint8Array {
+    return this.payload.randomSeed;
+  }
+
   get signature(): Uint8Array {
     return this.payload.signature;
   }
@@ -75,6 +81,7 @@ export class PrivateMessage {
 
   public encode(): Uint8Array {
     const message = PrivateMessage.Type.create(this.payload);
+    console.log("message", message);
     return PrivateMessage.Type.encode(message).finish();
   }
 
