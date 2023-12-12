@@ -31,7 +31,7 @@ export function handlePublicKeyMessage(
   setter: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>,
   msg: DecodedMessage
 ) {
-  console.log("Public Key Message received:", msg);
+  // console.log("Public Key Message received:", msg);
   if (!msg.payload) return;
   const publicKeyMsg = PublicKeyMessage.decode(msg.payload);
   if (!publicKeyMsg) return;
@@ -60,7 +60,7 @@ export async function handlePrivateMessage(
   address: string,
   wakuMsg: DecodedMessage
 ) {
-  console.log("Private Message received:", wakuMsg);
+  // console.log("Private Message received:", wakuMsg);
   if (!wakuMsg.payload) return;
   const privateMessage = PrivateMessage.decode(wakuMsg.payload);
   if (!privateMessage) {

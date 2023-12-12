@@ -50,7 +50,6 @@ export default function BroadcastPublicKey({
     return publicKeyMsg;
     })();
     const payload = _publicKeyMessage.encode(); // protobuf encode
-    console.log(payload);
 
     const publicKeyMessageEncoder = createEncoder({
       contentTopic: PublicKeyContentTopic,

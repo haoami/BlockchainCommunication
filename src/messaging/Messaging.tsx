@@ -15,11 +15,6 @@ const useStyles = makeStyles((t)=>({
     justifyContent: 'space-between', // 或者使用 'space-around'，具体根据需要选择
     height: '100%',
   }
-  // root: {
-  //   display: 'flex',
-  //   flexDirection: 'column',
-  //   alignItems: 'center', // 居中对齐
-  // }
 }));
 
 interface Props {

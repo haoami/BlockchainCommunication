@@ -103,13 +103,13 @@ export default function SendMessage({ waku, recipients, publicKey, address, sign
           {items}
         </Select>
       </FormControl>
-      <ReplyPublicKey
+      {/* <ReplyPublicKey
         address={address}
         selectedRecipients={recipients.get(recipient)}
         selfPublicKey={publicKey}
         waku={waku}
         signer={signer}
-      />
+      /> */}
       <TextField
         id="message-input"
         label="Message"

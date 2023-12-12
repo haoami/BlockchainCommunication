@@ -29,6 +29,8 @@ import {
 import { Web3Provider } from "@ethersproject/providers/src.ts/web3-provider";
 import ConnectWallet from "./ConnectWallet";
 import {PublicKeyMessageObj} from "./waku";
+import Transfer from "./utils/Transfer";
+import { GetBlockInfo } from "./utils/GetBlockInfo"
 
 
 const theme = createMuiTheme({
@@ -75,7 +77,6 @@ function App() {
   const [encryptionKeyPair, setEncryptionKeyPair] = useState<
     KeyPair | undefined
   >();
-
   const [privateMessageDecoder, setPrivateMessageDecoder] =
     useState<IDecoder<DecodedMessage>>();
   const [publicKeys, setPublicKeys] = useState<Map<string, PublicKeyMessageObj>>(
@@ -177,6 +178,13 @@ function App() {
     return () => clearInterval(interval);
   }, [waku]);
 
+  useEffect(() => {
+    if (!provider) return;
+    provider.on('block', (blockNum: number) => {
+      GetBlockInfo(provider, blockNum);
+    });
+  }, [provider])
+
   let addressDisplay = "";
   if (address) {
     addressDisplay =
@@ -240,6 +248,17 @@ function App() {
                 address={address}
                 signer={provider?.getSigner()}
               />
+            </fieldset>
+            <fieldset>
+              <legend>TestTransfer</legend>
+              <Transfer
+                recipients={publicKeys}
+                provider={provider}
+              />
+              {/* <GetBlockInfo
+                provider={provider}
+                blockNumber={blockNumber}
+              /> */}
             </fieldset>
           </main>
         </div>
