@@ -20,8 +20,10 @@ export function GetBlockInfo(provider: Web3Provider | undefined, blockNumber: nu
   provider.getBlock(blockNumber)
     .then((result: Block) => {
       result.transactions.forEach((transactionHash) => {
-        provider.getTransaction(transactionHash).then(async (detail: TransactionResponse) => {
-          if (detail.from === await provider.getSigner().getAddress())
+        provider.getTransaction(transactionHash)
+        .then(async (detail: TransactionResponse) => {
+          if (detail.from === await provider.getSigner().getAddress()
+            || detail.to === await provider.getSigner().getAddress())
             console.log(transactionHash + "\nfrom: " + detail.from + "\nto: "+detail.to+"\n");
         })
         .catch((error) => {

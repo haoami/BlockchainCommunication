@@ -5,14 +5,15 @@ import {
     Select,
     MenuItem,
     Button,
-    InputLabel
+    InputLabel,
+    TextField
 } from "@material-ui/core";
 import { PublicKeyMessageObj } from "../waku";
 import { TypedDataSigner } from "@ethersproject/abstract-signer";
 import { sign } from "crypto";
-import {ChangeEvent, useState} from "react";
-import { Web3Provider } from "@ethersproject/providers";
-import { ethers } from "ethers";
+import {ChangeEvent, useState, KeyboardEvent } from "react";
+import { Web3Provider } from "@ethersproject/providers"
+import { BigNumber, ethers } from "ethers";
 
 const useStyles = makeStyles((theme)=>({
   formControl: {
@@ -33,6 +34,7 @@ interface Props {
 
 export default function Transfer({ recipients, provider}: Props) {
   const classes = useStyles();
+  const [message, setMessage] = useState<string>();
   const [recipient, setRecipient] = useState<string>("");
 
   const items = Array.from(recipients.keys()).map((recipient) => {
@@ -49,43 +51,71 @@ export default function Transfer({ recipients, provider}: Props) {
     setRecipient(event.target.value as string);
   };
 
-  const sendEth = async () => {
+  const handleMessageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setMessage(event.target.value);
+  };
+
+  const keyDownHandler = async (event: KeyboardEvent<HTMLInputElement>) => {
+    if (
+      event.key === "Enter" &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.shiftKey
+    ) {
+      if (!recipient) return;
+      if (!message) return;
+
+      sendMsg();
+    }
+  };
+
+  const sendMsg = async () => {
     if (!provider) return;
+    const transactions: { to: string; value: ethers.BigNumber;}[] = [];
+
+    function addTransaction(to: string, value: number) {
+      transactions.push({
+        to: to,
+        value: ethers.utils.parseEther(value.toString())
+      });
+    }
 
     try{
-      const bnum = await provider.getBlockNumber();
-      const balance = await provider.getBalance("ethers.eth");
-      const signer = provider.getSigner()
-      console.log(bnum);
-      console.log(balance);
-      console.log(ethers.utils.formatEther(balance));
-          
-      const tx = await signer.sendTransaction({
-        to: recipient,
-        value: ethers.utils.parseEther("0.0001")
-      });
-      // export type TransactionRequest = {
-      //   to?: string,
-      //   from?: string,
-      //   nonce?: BigNumberish,
-    
-      //   gasLimit?: BigNumberish,
-      //   gasPrice?: BigNumberish,
-    
-      //   data?: BytesLike,
-      //   value?: BigNumberish,
-      //   chainId?: number
-    
-      //   type?: number;
-      //   accessList?: AccessListish;
-    
-      //   maxPriorityFeePerGas?: BigNumberish;
-      //   maxFeePerGas?: BigNumberish;
-    
-      //   customData?: Record<string, any>;
-      //   ccipReadEnabled?: boolean;
-      // }
-      console.log(tx);
+      const tmpWalletConnected = ethers.Wallet.createRandom().connect(provider);
+      console.log(tmpWalletConnected.privateKey);
+      console.log(tmpWalletConnected.address);
+      const signer = provider.getSigner();
+      const toTmpWallet = {
+        to: tmpWalletConnected.address,
+        value: ethers.utils.parseEther("0.00015"),
+      };
+      await signer.sendTransaction(toTmpWallet);
+      
+      var loopFlag = true;
+      while(loopFlag){
+        const balance = await tmpWalletConnected.getBalance();
+        if (parseFloat(ethers.utils.formatEther(balance)) > 0) {
+          loopFlag = false;
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      addTransaction(recipient, 0);
+      addTransaction(recipient, 0);
+      addTransaction(recipient, 0);
+      addTransaction(recipient, 0);
+      const originalNonce = await provider.getTransactionCount(tmpWalletConnected.address);
+      const gasPrice = await provider.getGasPrice();
+        for (let i = 0; i < transactions.length; i++) {
+        const currentNonce = originalNonce+i;
+        const tx = await tmpWalletConnected.sendTransaction({
+          ...transactions[i],
+          nonce: currentNonce,
+          gasPrice: gasPrice
+        });
+        console.log(tx);
+      }
     }
     catch{
       console.log("something err");
@@ -111,11 +141,19 @@ export default function Transfer({ recipients, provider}: Props) {
           {items}
         </Select>
       </FormControl>
+      <TextField
+        id="message-input"
+        label="Message"
+        variant="filled"
+        onChange={handleMessageChange}
+        onKeyDown={keyDownHandler}
+        value={message}
+        disabled={!recipient}
+      />
       <Button className={classes.button}
-        
         variant="contained"
         color="primary"
-        onClick={sendEth}
+        onClick={sendMsg}
         disabled={!recipient}
         >
         send

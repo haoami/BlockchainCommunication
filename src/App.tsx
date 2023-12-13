@@ -180,9 +180,10 @@ function App() {
 
   useEffect(() => {
     if (!provider) return;
-    provider.on('block', (blockNum: number) => {
-      GetBlockInfo(provider, blockNum);
-    });
+    provider.on('block', GetBlockInfo.bind(
+      {},
+      provider)
+    );
   }, [provider])
 
   let addressDisplay = "";
