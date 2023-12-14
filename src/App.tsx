@@ -236,7 +236,7 @@ function App() {
                 address={address}
                 encryptionKeyPair={encryptionKeyPair}
                 waku={waku}
-                signer={provider?.getSigner()}
+                provider={provider}
               />
             </fieldset>
             <fieldset>
@@ -247,7 +247,7 @@ function App() {
                 messages={messages}
                 publicKey={encryptionKeyPair?.publicKey}
                 address={address}
-                signer={provider?.getSigner()}
+                provider={provider}
               />
             </fieldset>
             <fieldset>
@@ -256,10 +256,6 @@ function App() {
                 recipients={publicKeys}
                 provider={provider}
               />
-              {/* <GetBlockInfo
-                provider={provider}
-                blockNumber={blockNumber}
-              /> */}
             </fieldset>
           </main>
         </div>

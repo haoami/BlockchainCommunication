@@ -35,3 +35,21 @@ export function GetBlockInfo(provider: Web3Provider | undefined, blockNumber: nu
       console.log("err getting block: ", error);
     })
 }
+
+export function stringToBinary(str: string): string {
+  let binary = '';
+  for (let i = 0; i < str.length; i++) {
+      const charCode = str.charCodeAt(i).toString(2);
+      binary += '00000000'.slice(charCode.length) + charCode;
+  }
+  return binary;
+}
+
+export function binaryToString(binary: string): string {
+  let str = '';
+  for (let i = 0; i < binary.length; i += 8) {
+    const byte = binary.slice(i, i + 8);
+    str += String.fromCharCode(parseInt(byte, 2));
+  }
+  return str;
+}

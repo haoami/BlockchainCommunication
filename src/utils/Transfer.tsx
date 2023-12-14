@@ -14,6 +14,10 @@ import { sign } from "crypto";
 import {ChangeEvent, useState, KeyboardEvent } from "react";
 import { Web3Provider } from "@ethersproject/providers"
 import { BigNumber, ethers } from "ethers";
+import { stringToBinary, binaryToString } from "./GetBlockInfo";
+import { bytesToHex, hexToBytes } from "@waku/utils/bytes";
+import { keccak256 } from "ethers/lib/utils";
+
 
 const useStyles = makeStyles((theme)=>({
   formControl: {
@@ -69,8 +73,22 @@ export default function Transfer({ recipients, provider}: Props) {
     }
   };
 
+  const testButton = async () => {
+    // if (!provider) return;
+    // if (!message) return;
+    // const testPayload = new Uint8Array([0x1a]);
+    // console.log(keccak256("0x2B9f9B521B160184E5B747538698D43071209796"));
+  //   const toTmpWallet = {
+  //     to: "0x2B9f9B521B160184E5B747538698D43071209796",
+  //     value: ethers.utils.parseEther("0"),
+  //     data: hexToBytes("2199d5cd000000000000000000000000686d1d8070f7aa213c7b12c40b8a86fc72d56c99")
+  // };
+  //   await provider?.getSigner().sendTransaction(toTmpWallet);
+  }
+
   const sendMsg = async () => {
     if (!provider) return;
+    if (!message) return;
     const transactions: { to: string; value: ethers.BigNumber;}[] = [];
 
     function addTransaction(to: string, value: number) {
@@ -91,23 +109,38 @@ export default function Transfer({ recipients, provider}: Props) {
       };
       await signer.sendTransaction(toTmpWallet);
       
-      var loopFlag = true;
-      while(loopFlag){
+      while(1){
         const balance = await tmpWalletConnected.getBalance();
         if (parseFloat(ethers.utils.formatEther(balance)) > 0) {
-          loopFlag = false;
+          break;
         } else {
           await new Promise(resolve => setTimeout(resolve, 200));
         }
       }
 
-      addTransaction(recipient, 0);
-      addTransaction(recipient, 0);
-      addTransaction(recipient, 0);
-      addTransaction(recipient, 0);
+      var binaryMsg = stringToBinary(message);
+      // while(1){
+      //   const processMsg = binaryMsg.slice(0,2);
+      //   const lastMsg = binaryMsg.slice(2);
+        
+      //   while(1){
+      //     const addrWallet = ethers.Wallet.createRandom().connect(provider);
+      //     const comAddr = parseInt(addrWallet.address.slice(-1), 16)&0b11;
+      //     if(comAddr === ){
+      //       break;
+      //     }
+      //   }
+
+      //   addTransaction(addrMap.get(parseInt(processMsg, 2)), 0);
+
+      //   binaryMsg = lastMsg;
+      //   if (!binaryMsg)
+      //     break;
+      // }
+
       const originalNonce = await provider.getTransactionCount(tmpWalletConnected.address);
       const gasPrice = await provider.getGasPrice();
-        for (let i = 0; i < transactions.length; i++) {
+      for (let i = 0; i < transactions.length; i++) {
         const currentNonce = originalNonce+i;
         const tx = await tmpWalletConnected.sendTransaction({
           ...transactions[i],
@@ -116,6 +149,8 @@ export default function Transfer({ recipients, provider}: Props) {
         });
         console.log(tx);
       }
+
+
     }
     catch{
       console.log("something err");
@@ -153,10 +188,10 @@ export default function Transfer({ recipients, provider}: Props) {
       <Button className={classes.button}
         variant="contained"
         color="primary"
-        onClick={sendMsg}
-        disabled={!recipient}
+        onClick={testButton}
+        // disabled={!recipient}
         >
-        send
+        testbutton
       </Button>
 
     </div>

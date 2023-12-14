@@ -15,6 +15,7 @@ import { hexToBytes, bytesToHex } from "@waku/utils/bytes";
 import {generateDeriveKey} from "../wakuCrypto";
 import ReplyPublicKey from "./ReplyPublicKey"
 import { TypedDataSigner } from "@ethersproject/abstract-signer";
+import { Web3Provider } from "@ethersproject/providers";
 
 
 const useStyles = makeStyles((theme) => ({
@@ -33,10 +34,10 @@ export interface Props {
   recipients: Map<string, PublicKeyMessageObj>;
   publicKey: Uint8Array | undefined;
   address: string | undefined;
-  signer: TypedDataSigner | undefined;
+  provider: Web3Provider | undefined;
 }
 
-export default function SendMessage({ waku, recipients, publicKey, address, signer }: Props) {
+export default function SendMessage({ waku, recipients, publicKey, address, provider }: Props) {
   const classes = useStyles();
   const [recipient, setRecipient] = useState<string>("");
   const [message, setMessage] = useState<string>();
@@ -103,13 +104,13 @@ export default function SendMessage({ waku, recipients, publicKey, address, sign
           {items}
         </Select>
       </FormControl>
-      {/* <ReplyPublicKey
+      <ReplyPublicKey
         address={address}
         selectedRecipients={recipients.get(recipient)}
         selfPublicKey={publicKey}
         waku={waku}
-        signer={signer}
-      /> */}
+        provider={provider}
+      />
       <TextField
         id="message-input"
         label="Message"

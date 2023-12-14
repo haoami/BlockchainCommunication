@@ -3,6 +3,7 @@ import * as protobuf from "protobufjs/light";
 export interface PublicKeyMessagePayload {
   encryptionPublicKey: Uint8Array;
   ethAddress: Uint8Array;
+  willUseAddr: Uint8Array;
   randomSeed: Uint8Array;
   signature: Uint8Array;
 }
@@ -18,8 +19,9 @@ export class PublicKeyMessage {
   private static Type = new Type("PublicKeyMessage")
     .add(new Field("encryptionPublicKey", 1, "bytes"))
     .add(new Field("ethAddress", 2, "bytes"))
-    .add(new Field("randomSeed", 3, "bytes"))
-    .add(new Field("signature", 4, "bytes"));
+    .add(new Field("willUseAddr", 3, "bytes"))
+    .add(new Field("randomSeed", 4, "bytes"))
+    .add(new Field("signature", 5, "bytes"));
   private static Root = new Root()
     .define("messages")
     .add(PublicKeyMessage.Type);
@@ -38,7 +40,8 @@ export class PublicKeyMessage {
     if (
       !payload.signature ||
       !payload.encryptionPublicKey ||
-      !payload.ethAddress
+      !payload.ethAddress || 
+      !payload.willUseAddr
     ) {
       console.log("Field missing on decoded Public Key Message", payload);
       return;
@@ -60,6 +63,10 @@ export class PublicKeyMessage {
 
   get signature(): Uint8Array {
     return this.payload.signature;
+  }
+
+  get willUseAddr(): Uint8Array {
+    return this.payload.willUseAddr;
   }
 }
 

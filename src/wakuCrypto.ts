@@ -35,6 +35,7 @@ export async function generateEncryptionKeyPair(): Promise<KeyPair> {
  */
 export async function createPublicKeyMessage(
   address: string,
+  willUseAddr: string,
   encryptionPublicKey: Uint8Array,
   randomSeed: Uint8Array,
   signer: TypedDataSigner
@@ -42,6 +43,7 @@ export async function createPublicKeyMessage(
   const signature = await signEncryptionKey(
     encryptionPublicKey,
     address,
+    willUseAddr,
     randomSeed,
     signer
   );
@@ -49,12 +51,13 @@ export async function createPublicKeyMessage(
   return new PublicKeyMessage({
     encryptionPublicKey: encryptionPublicKey,
     ethAddress: hexToBytes(address),
+    willUseAddr: hexToBytes(willUseAddr),
     randomSeed: randomSeed,
     signature: hexToBytes(signature),
   });
 }
 
-function buildMsgParams(encryptionPublicKey: Uint8Array, fromAddress: string, randomSeed: Uint8Array) {
+function buildMsgParams(encryptionPublicKey: Uint8Array, fromAddress: string, willUseAddr: string, randomSeed: Uint8Array) {
   return {
     domain: {
       name: "Ethereum Private Message over Waku",
@@ -65,6 +68,7 @@ function buildMsgParams(encryptionPublicKey: Uint8Array, fromAddress: string, ra
         "By signing this message you certify that messages addressed to `ownerAddress` must be encrypted with `encryptionPublicKey`",
       encryptionPublicKey: bytesToHex(encryptionPublicKey),
       ownerAddress: fromAddress,
+      willUseAddr: willUseAddr,
       randomSeed: bytesToHex(randomSeed),
     },
     // Refers to the keys of the *types* object below.
@@ -74,6 +78,7 @@ function buildMsgParams(encryptionPublicKey: Uint8Array, fromAddress: string, ra
         { name: "message", type: "string" },
         { name: "encryptionPublicKey", type: "string" },
         { name: "ownerAddress", type: "string" },
+        { name: "willUseAddr", type: "string" },
         { name: "randomSeed", type: "string"}
       ],
     },
@@ -83,12 +88,14 @@ function buildMsgParams(encryptionPublicKey: Uint8Array, fromAddress: string, ra
 export async function signEncryptionKey(
   encryptionPublicKey: Uint8Array,
   fromAddress: string,
+  willUseAddr: string,
   randomSeed: Uint8Array,
   signer: TypedDataSigner
 ): Promise<Uint8Array> {
   const { domain, types, value } = buildMsgParams(
     encryptionPublicKey,
     fromAddress,
+    willUseAddr,
     randomSeed
   );
 
@@ -106,6 +113,7 @@ export function validatePublicKeyMessage(msg: PublicKeyMessage): boolean {
   const { domain, types, value } = buildMsgParams(
     msg.encryptionPublicKey,
     "0x" + bytesToHex(msg.ethAddress),
+    "0x" + bytesToHex(msg.willUseAddr),
     msg.randomSeed
   );
 
