@@ -21,6 +21,7 @@ import {
   createPublicKeyMessage,
   genRandomBytes,
   KeyPair,
+  validatePublicKeyMessage,
 } from "../wakuCrypto";
 import { PublicKeyMessage } from "../messaging/wire";
 
@@ -81,17 +82,6 @@ export default function Transfer({ recipients, provider}: Props) {
 
   const testButton = async () => {
     if (!provider) return;
-    
-    const a = await provider.getBlock(10214476);
-    console.log("111");
-    for(const t of a.transactions){
-      const z = await provider.getTransaction(t);
-      if (!z) continue;
-      if (!z.to) continue;
-      if (z.to.toUpperCase() === "0x7Ce7e61d37E10D72e92e0b9CE6407A8B2dfB1af1".toUpperCase()){
-        console.log(z.data.slice(-1));
-      }
-    }
   }
 
   const sendMsg = async () => {

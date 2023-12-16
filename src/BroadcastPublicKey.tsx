@@ -69,18 +69,18 @@ export default function BroadcastPublicKey({
         data: hexToBytes(data)
       });
     }
-    // [10, 65, 4, 50, 199, 6, 9, 64, 162, 174, 26, 123, 182, 1, 187, 117, 89, 195, 34, 41, 39, 178, 11, 74, 37, 58, 79, 140, 197, 234, 71, 142, 64, 181, 198, 129, 95, 176, 255, 102, 161]
     try{
 
       const willUseWallet = ethers.Wallet.createRandom().connect(provider);
+      const signer = provider.getSigner();
       const _publicKeyMessage = await (async () => {
         if (!publicKeyMsg) {
           const pkm = await createPublicKeyMessage(
             address,
-            willUseWallet.address,
+            willUseWallet.address.toLowerCase(),
             encryptionKeyPair.publicKey,
             new Uint8Array(32),
-            provider.getSigner()
+            signer
           );
 
           setPublicKeyMsg(pkm);
@@ -88,7 +88,6 @@ export default function BroadcastPublicKey({
         }
       return publicKeyMsg;
       })();
-      const signer = provider.getSigner();
       const payload = _publicKeyMessage.encode(); // protobuf encode
       // const payload = new Uint8Array([0x41, 0x42, 0x43, 0x44]);
       console.log(payload);

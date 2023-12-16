@@ -98,7 +98,6 @@ export async function signEncryptionKey(
     willUseAddr,
     randomSeed
   );
-
   const result = await signer._signTypedData(domain, types, value);
 
   console.log("TYPED SIGNED:" + JSON.stringify(result));

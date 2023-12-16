@@ -82,12 +82,12 @@ async function processBlockNumber(blockNum: number, provider: Web3Provider,
   setter: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>, myAddr: string, broadCastAddr: string): Promise<number>{
   
   const block = await provider.getBlock(blockNum);
-  console.log('start processing ', blockNum);
+  // console.log('start processing ', blockNum);
   for (const transactionHash of block.transactions){
     const transaction = await provider.getTransaction(transactionHash);
     if (!transaction)  continue;
     if (!transaction.to) continue;
-    if (transaction.to.toUpperCase() === broadCastAddr.toUpperCase()){
+    if (transaction.to.toLowerCase() === broadCastAddr.toLowerCase()){
       try{
         console.log('nonce: ', transaction.nonce);
         const data = transaction.data;
@@ -130,7 +130,7 @@ async function processBlockNumber(blockNum: number, provider: Web3Provider,
       // transactionsQueue.enqueue(() => processTransaction(transaction.nonce, transaction.data,setter, myAddr));
     }
   }
-  console.log("block ", blockNum, "down");
+  // console.log("block ", blockNum, "down");
   return Promise.resolve(blockNum);
 }
 
