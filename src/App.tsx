@@ -30,7 +30,7 @@ import { Web3Provider } from "@ethersproject/providers/src.ts/web3-provider";
 import ConnectWallet from "./ConnectWallet";
 import {PublicKeyMessageObj} from "./waku";
 import Transfer from "./utils/Transfer";
-import { GetBlockInfo } from "./utils/GetBlockInfo"
+import { processBlock } from "./utils/GetBlockInfo"
 
 
 const theme = createMuiTheme({
@@ -84,6 +84,7 @@ function App() {
   );
   const [messages, setMessages] = useState<Message[]>([]);
   const [address, setAddress] = useState<string>();
+  const [broadCastAddress, setbroadCastAddress] = useState<string>();
   const [peerStats, setPeerStats] = useState<{
     relayPeers: number;
   }>({
@@ -180,16 +181,22 @@ function App() {
 
   useEffect(() => {
     if (!provider) return;
-    provider.on('block', GetBlockInfo.bind(
+    if (!address) return;
+    if (!broadCastAddress) return;
+    provider.on('block', processBlock.bind(
       {},
-      provider)
+      address,
+      broadCastAddress,
+      provider,
+      setPublicKeys)
     );
   }, [provider])
 
   let addressDisplay = "";
   if (address) {
     addressDisplay =
-      address.substr(0, 6) + "..." + address.substr(address.length - 4, 4);
+      address;
+      // address.substr(0, 6) + "..." + address.substr(address.length - 4, 4);
   }
 
   return (
@@ -224,6 +231,7 @@ function App() {
               <ConnectWallet
                 setAddress={setAddress}
                 setProvider={setProvider}
+                setbroadCastAddress={setbroadCastAddress}
               />
             </fieldset>
             <fieldset>

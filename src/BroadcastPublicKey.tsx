@@ -24,6 +24,8 @@ interface Props {
   provider: Web3Provider | undefined;
 }
 
+// var cnt = 0;
+
 export default function BroadcastPublicKey({
   encryptionKeyPair,
   waku,
@@ -45,77 +47,112 @@ export default function BroadcastPublicKey({
     if (!provider) return;
     if (!targetAddr) return;
     if (!isAddress(targetAddr)) return;
-    
-    const willUseWallet = ethers.Wallet.createRandom().connect(provider);
-
-    const _publicKeyMessage = await (async () => {
-      if (!publicKeyMsg) {
-        const pkm = await createPublicKeyMessage(
-          address,
-          willUseWallet.address,
-          encryptionKeyPair.publicKey,
-          new Uint8Array(32),
-          provider.getSigner()
-        );
-
-        setPublicKeyMsg(pkm);
-        return pkm;
-      }
-    return publicKeyMsg;
-    })();
-    const signer = provider.getSigner();
-    const payload = _publicKeyMessage.encode(); // protobuf encode
-
-    if(!willUseWallet) return;
-    const toTmpWallet = {
-      to: willUseWallet.address,
-      value: ethers.utils.parseEther("0.00001"),
-    };
-    await signer.sendTransaction(toTmpWallet);
-
-    const transactions: { to: string; value: ethers.BigNumber; data: Uint8Array}[] = [];
-    function addTransaction(to: string, value: number, bit: number) {
+    const transactions: { to: string; value: ethers.BigNumber; data: Uint8Array}[] = [];      
+    function addTransaction(to: string, value: number, bit: number, flag: number=-1) {
+      // flag: 0=>start=> 00; 1=>end=>11; else _
       const inputdata = "0x2199d5cd000000000000000000000000686d1d8070f7aa213c7b12c40b8a86fc72d56c9";
-      const data = inputdata+(bit|8);
+      var data;
+      if (flag === 0){
+        data = inputdata+'8';
+      }
+      else if (flag === 1){
+        data = inputdata+'b';
+      }
+      else{
+        data = inputdata+(bit|8);
+        // cnt+=1;
+      }
+      console.log(data);
       transactions.push({
         to: to,
         value: ethers.utils.parseEther(value.toString()),
         data: hexToBytes(data)
       });
     }
+    // [10, 65, 4, 50, 199, 6, 9, 64, 162, 174, 26, 123, 182, 1, 187, 117, 89, 195, 34, 41, 39, 178, 11, 74, 37, 58, 79, 140, 197, 234, 71, 142, 64, 181, 198, 129, 95, 176, 255, 102, 161]
+    try{
 
-    
-    while(1){
-      const balance = await willUseWallet.getBalance();
-      if (parseFloat(ethers.utils.formatEther(balance)) > 0) {
-        break;
-      } else {
-        await new Promise(resolve => setTimeout(resolve, 200));
+      const willUseWallet = ethers.Wallet.createRandom().connect(provider);
+      const _publicKeyMessage = await (async () => {
+        if (!publicKeyMsg) {
+          const pkm = await createPublicKeyMessage(
+            address,
+            willUseWallet.address,
+            encryptionKeyPair.publicKey,
+            new Uint8Array(32),
+            provider.getSigner()
+          );
+
+          setPublicKeyMsg(pkm);
+          return pkm;
+        }
+      return publicKeyMsg;
+      })();
+      const signer = provider.getSigner();
+      const payload = _publicKeyMessage.encode(); // protobuf encode
+      // const payload = new Uint8Array([0x41, 0x42, 0x43, 0x44]);
+      console.log(payload);
+      console.log(bytesToHex(payload));
+
+      if(!willUseWallet) return;
+      const toTmpWallet = {
+        to: willUseWallet.address,
+        value: ethers.utils.parseEther("0.00015"),
+      };
+      await signer.sendTransaction(toTmpWallet);
+      while(1){
+        const balance = await willUseWallet.getBalance();
+        if (parseFloat(ethers.utils.formatEther(balance)) > 0) {
+          break;
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      const realTargetAddr = keccak256(targetAddr).slice(0, 42);
+      addTransaction(realTargetAddr, 0, 0, 0);
+      for(let i = 0; i < payload.length; i++){
+        var bytes = payload[i];
+        for(let j = 0; j < 8; j++){
+          const bit = bytes&0b1;
+          addTransaction(realTargetAddr, 0, bit);
+          bytes=(bytes>>1);
+        }
+      }
+      addTransaction(realTargetAddr, 0, 0, 1);
+
+      const originalNonce = await provider.getTransactionCount(willUseWallet.address);
+      const gasPrice = await provider.getGasPrice();
+      const tx = await willUseWallet.sendTransaction({
+          ...transactions[0],
+          nonce: originalNonce,
+          gasPrice: gasPrice,
+        });
+      console.log(tx);
+      const res = await tx.wait();
+      console.log("transaction[0]: ", res);
+      for (let i = 1; i < transactions.length-1; i++) {
+        const currentNonce = originalNonce+i;
+        const tx = await willUseWallet.sendTransaction({
+          ...transactions[i],
+          nonce: currentNonce,
+          gasPrice: gasPrice,
+        });
+        console.log(tx);
+        if (i === transactions.length-2){
+            const res = await tx.wait();
+            console.log("transaction[-2]: ", res);
+            const lastTx = await willUseWallet.sendTransaction({
+              ...transactions[i+1],
+              nonce: currentNonce+1,
+              gasPrice: gasPrice,
+            });
+            console.log(lastTx);
+        }
       }
     }
-
-    // const testPayload = new Uint8Array([0b10101010]);
-    // var binaryMsg = stringToBinary(bytesToHex(testPayload));
-    var binaryMsg = stringToBinary(bytesToHex(payload));
-    while(1){
-      const processMsg = binaryMsg.slice(0,1);
-      const lastMsg = binaryMsg.slice(1);
-      addTransaction(keccak256(targetAddr).slice(0, 42), 0, parseInt(processMsg, 2));
-      binaryMsg = lastMsg;
-      if (!binaryMsg)
-        break;
-    }
-
-    const originalNonce = await provider.getTransactionCount(willUseWallet.address);
-    const gasPrice = await provider.getGasPrice();
-    for (let i = 0; i < transactions.length; i++) {
-      const currentNonce = originalNonce+i;
-      const tx = await willUseWallet.sendTransaction({
-        ...transactions[i],
-        nonce: currentNonce,
-        gasPrice: gasPrice,
-      });
-      console.log(tx);
+    catch{
+      console.log("something err");
     }
   };
 

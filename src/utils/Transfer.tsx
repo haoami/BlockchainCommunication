@@ -17,6 +17,12 @@ import { BigNumber, ethers } from "ethers";
 import { stringToBinary, binaryToString } from "./GetBlockInfo";
 import { bytesToHex, hexToBytes } from "@waku/utils/bytes";
 import { keccak256 } from "ethers/lib/utils";
+import {
+  createPublicKeyMessage,
+  genRandomBytes,
+  KeyPair,
+} from "../wakuCrypto";
+import { PublicKeyMessage } from "../messaging/wire";
 
 
 const useStyles = makeStyles((theme)=>({
@@ -74,16 +80,18 @@ export default function Transfer({ recipients, provider}: Props) {
   };
 
   const testButton = async () => {
-    // if (!provider) return;
-    // if (!message) return;
-    // const testPayload = new Uint8Array([0x1a]);
-    // console.log(keccak256("0x2B9f9B521B160184E5B747538698D43071209796"));
-  //   const toTmpWallet = {
-  //     to: "0x2B9f9B521B160184E5B747538698D43071209796",
-  //     value: ethers.utils.parseEther("0"),
-  //     data: hexToBytes("2199d5cd000000000000000000000000686d1d8070f7aa213c7b12c40b8a86fc72d56c99")
-  // };
-  //   await provider?.getSigner().sendTransaction(toTmpWallet);
+    if (!provider) return;
+    
+    const a = await provider.getBlock(10214476);
+    console.log("111");
+    for(const t of a.transactions){
+      const z = await provider.getTransaction(t);
+      if (!z) continue;
+      if (!z.to) continue;
+      if (z.to.toUpperCase() === "0x7Ce7e61d37E10D72e92e0b9CE6407A8B2dfB1af1".toUpperCase()){
+        console.log(z.data.slice(-1));
+      }
+    }
   }
 
   const sendMsg = async () => {
@@ -138,17 +146,17 @@ export default function Transfer({ recipients, provider}: Props) {
       //     break;
       // }
 
-      const originalNonce = await provider.getTransactionCount(tmpWalletConnected.address);
-      const gasPrice = await provider.getGasPrice();
-      for (let i = 0; i < transactions.length; i++) {
-        const currentNonce = originalNonce+i;
-        const tx = await tmpWalletConnected.sendTransaction({
-          ...transactions[i],
-          nonce: currentNonce,
-          gasPrice: gasPrice
-        });
-        console.log(tx);
-      }
+      // const originalNonce = await provider.getTransactionCount(tmpWalletConnected.address);
+      // const gasPrice = await provider.getGasPrice();
+      // for (let i = 0; i < transactions.length; i++) {
+      //   const currentNonce = originalNonce+i;
+      //   const tx = await tmpWalletConnected.sendTransaction({
+      //     ...transactions[i],
+      //     nonce: currentNonce,
+      //     gasPrice: gasPrice
+      //   });
+      //   console.log(tx);
+      // }
 
 
     }
