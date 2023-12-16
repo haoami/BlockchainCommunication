@@ -1,6 +1,6 @@
 import { Button } from "@material-ui/core";
 import React from "react";
-import { KeyPair } from "../crypto";
+import { KeyPair } from "../wakuCrypto";
 import { saveKeyPairToStorage } from "./key_pair_storage";
 
 export interface Props {

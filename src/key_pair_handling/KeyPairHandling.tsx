@@ -1,8 +1,8 @@
-import { Button } from "@material-ui/core";
+import { Button, TextField } from "@material-ui/core";
 import { LoadKeyPair } from "./LoadKeyPair";
 import { SaveKeyPair } from "./SaveKeyPair";
 import React, { useState } from "react";
-import { generateEncryptionKeyPair, KeyPair } from "../crypto";
+import { generateEncryptionKeyPair, KeyPair } from "../wakuCrypto";
 import { makeStyles } from "@material-ui/core/styles";
 import PasswordInput from "./PasswordInput";
 
@@ -64,27 +64,6 @@ export default function KeyPairHandling({
       >
         Generate Encryption Key Pair
       </Button>
-      <div className={classes.storage}>
-        <PasswordInput
-          password={password}
-          setPassword={(p) => setPassword(p)}
-        />
-        <div className={classes.loadSave}>
-          <div className={classes.loadSaveButton}>
-            <LoadKeyPair
-              setEncryptionKeyPair={(keyPair) => setEncryptionKeyPair(keyPair)}
-              disabled={!!encryptionKeyPair}
-              password={password}
-            />
-          </div>
-          <div className={classes.loadSaveButton}>
-            <SaveKeyPair
-              EncryptionKeyPair={encryptionKeyPair}
-              password={password}
-            />
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

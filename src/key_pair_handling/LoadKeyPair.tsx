@@ -1,7 +1,7 @@
 import { Button } from "@material-ui/core";
 import React from "react";
 import { loadKeyPairFromStorage } from "./key_pair_storage";
-import { KeyPair } from "../crypto";
+import { KeyPair } from "../wakuCrypto";
 
 export interface Props {
   setEncryptionKeyPair: (keyPair: KeyPair) => void;

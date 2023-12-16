@@ -5,7 +5,7 @@ import "./App.css";
 import type { RelayNode, IDecoder } from "@waku/interfaces";
 import { createDecoder as createSymmetricDecoder } from "@waku/message-encryption/symmetric";
 import { createDecoder, DecodedMessage } from "@waku/message-encryption/ecies";
-import { KeyPair, PublicKeyMessageEncryptionKey } from "./crypto";
+import { KeyPair, PublicKeyMessageEncryptionKey } from "./wakuCrypto";
 import { Message } from "./messaging/Messages";
 import "fontsource-roboto";
 import { AppBar, IconButton, Toolbar, Typography } from "@material-ui/core";
@@ -28,6 +28,10 @@ import {
 } from "./waku";
 import { Web3Provider } from "@ethersproject/providers/src.ts/web3-provider";
 import ConnectWallet from "./ConnectWallet";
+import {PublicKeyMessageObj} from "./waku";
+import Transfer from "./utils/Transfer";
+import { processBlock } from "./utils/GetBlockInfo"
+
 
 const theme = createMuiTheme({
   palette: {
@@ -75,11 +79,12 @@ function App() {
   >();
   const [privateMessageDecoder, setPrivateMessageDecoder] =
     useState<IDecoder<DecodedMessage>>();
-  const [publicKeys, setPublicKeys] = useState<Map<string, Uint8Array>>(
+  const [publicKeys, setPublicKeys] = useState<Map<string, PublicKeyMessageObj>>(
     new Map()
   );
   const [messages, setMessages] = useState<Message[]>([]);
   const [address, setAddress] = useState<string>();
+  const [broadCastAddress, setbroadCastAddress] = useState<string>();
   const [peerStats, setPeerStats] = useState<{
     relayPeers: number;
   }>({
@@ -146,6 +151,7 @@ function App() {
 
     const observerPrivateMessage = handlePrivateMessage.bind(
       {},
+      setPublicKeys,
       setMessages,
       address
     );
@@ -173,10 +179,24 @@ function App() {
     return () => clearInterval(interval);
   }, [waku]);
 
+  useEffect(() => {
+    if (!provider) return;
+    if (!address) return;
+    if (!broadCastAddress) return;
+    provider.on('block', processBlock.bind(
+      {},
+      address,
+      broadCastAddress,
+      provider,
+      setPublicKeys)
+    );
+  }, [provider])
+
   let addressDisplay = "";
   if (address) {
     addressDisplay =
-      address.substr(0, 6) + "..." + address.substr(address.length - 4, 4);
+      address;
+      // address.substr(0, 6) + "..." + address.substr(address.length - 4, 4);
   }
 
   return (
@@ -198,7 +218,7 @@ function App() {
               (Relay) Peers: {peerStats.relayPeers}
             </Typography>
             <Typography variant="h6" className={classes.title}>
-              Ethereum Private Message
+            Blockchain covert communication(by kk/ay/f0)
             </Typography>
             <Typography>{addressDisplay}</Typography>
           </Toolbar>
@@ -211,6 +231,7 @@ function App() {
               <ConnectWallet
                 setAddress={setAddress}
                 setProvider={setProvider}
+                setbroadCastAddress={setbroadCastAddress}
               />
             </fieldset>
             <fieldset>
@@ -223,7 +244,7 @@ function App() {
                 address={address}
                 encryptionKeyPair={encryptionKeyPair}
                 waku={waku}
-                signer={provider?.getSigner()}
+                provider={provider}
               />
             </fieldset>
             <fieldset>
@@ -232,6 +253,16 @@ function App() {
                 recipients={publicKeys}
                 waku={waku}
                 messages={messages}
+                publicKey={encryptionKeyPair?.publicKey}
+                address={address}
+                provider={provider}
+              />
+            </fieldset>
+            <fieldset>
+              <legend>TestTransfer</legend>
+              <Transfer
+                recipients={publicKeys}
+                provider={provider}
               />
             </fieldset>
           </main>
