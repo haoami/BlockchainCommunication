@@ -15,7 +15,8 @@ export const PrivateMessageContentTopicPwd = "/eth-pm/1/private-message/protoPwd
 
 export type PublicKeyMessageObj = {
   encryptionPK: Uint8Array,
-  kdSalt: Uint8Array
+  kdSalt: Uint8Array,
+  willUseAddr: Uint8Array
 }
 
 export async function initWaku(): Promise<RelayNode> {
@@ -46,7 +47,8 @@ export function handlePublicKeyMessage(
         bytesToHex(publicKeyMsg.ethAddress),
         {
           encryptionPK: publicKeyMsg.encryptionPublicKey,
-          kdSalt: publicKeyMsg.randomSeed
+          kdSalt: publicKeyMsg.randomSeed,
+          willUseAddr: publicKeyMsg.willUseAddr
         }
       );
       return new Map(prevPks);
@@ -79,7 +81,8 @@ export async function handlePrivateMessage(
         bytesToHex(replyPublicKeyMessage.ethAddress),
         {
           encryptionPK: replyPublicKeyMessage.encryptionPublicKey,
-          kdSalt: replyPublicKeyMessage.randomSeed
+          kdSalt: replyPublicKeyMessage.randomSeed,
+          willUseAddr: replyPublicKeyMessage.willUseAddr
         }
       );
       return new Map(prevPks);

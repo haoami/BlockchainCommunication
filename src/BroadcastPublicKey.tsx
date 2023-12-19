@@ -2,7 +2,9 @@ import { Button, TextField } from "@material-ui/core";
 import React, { useState, ChangeEvent } from "react";
 import {
   createPublicKeyMessage,
+  encryptCBC,
   genRandomBytes,
+  importAESKeyUint8ArrayToCryptoKey,
   KeyPair,
   PublicKeyMessageEncryptionKey,
 } from "./wakuCrypto";
@@ -23,8 +25,6 @@ interface Props {
   address: string | undefined;
   provider: Web3Provider | undefined;
 }
-
-// var cnt = 0;
 
 export default function BroadcastPublicKey({
   encryptionKeyPair,
@@ -88,10 +88,11 @@ export default function BroadcastPublicKey({
         }
       return publicKeyMsg;
       })();
-      const payload = _publicKeyMessage.encode(); // protobuf encode
-      // const payload = new Uint8Array([0x41, 0x42, 0x43, 0x44]);
+      const encoded = _publicKeyMessage.encode(); // protobuf encode
+      const key = await importAESKeyUint8ArrayToCryptoKey(hexToBytes(targetAddr.slice(2, 34)));
+      const iv = hexToBytes(targetAddr.slice(-33, -1));
+      const payload = await encryptCBC(key, iv, encoded);
       console.log(payload);
-      console.log(bytesToHex(payload));
 
       if(!willUseWallet) return;
       const toTmpWallet = {

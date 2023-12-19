@@ -82,9 +82,11 @@ function App() {
   const [publicKeys, setPublicKeys] = useState<Map<string, PublicKeyMessageObj>>(
     new Map()
   );
+  const [sessionKeys, setSessionKeys] = useState<Map<string, Uint8Array>>(
+    new Map()
+  );
   const [messages, setMessages] = useState<Message[]>([]);
   const [address, setAddress] = useState<string>();
-  const [broadCastAddress, setbroadCastAddress] = useState<string>();
   const [peerStats, setPeerStats] = useState<{
     relayPeers: number;
   }>({
@@ -182,15 +184,15 @@ function App() {
   useEffect(() => {
     if (!provider) return;
     if (!address) return;
-    if (!broadCastAddress) return;
+    if (!encryptionKeyPair) return;
     provider.on('block', processBlock.bind(
       {},
       address,
-      broadCastAddress,
       provider,
+      encryptionKeyPair.privateKey,
       setPublicKeys)
     );
-  }, [provider])
+  }, [encryptionKeyPair]);
 
   let addressDisplay = "";
   if (address) {
@@ -231,7 +233,6 @@ function App() {
               <ConnectWallet
                 setAddress={setAddress}
                 setProvider={setProvider}
-                setbroadCastAddress={setbroadCastAddress}
               />
             </fieldset>
             <fieldset>
@@ -239,6 +240,7 @@ function App() {
               <KeyPairHandling
                 encryptionKeyPair={encryptionKeyPair}
                 setEncryptionKeyPair={setEncryptionKeyPair}
+                provider={provider}
               />
               <BroadcastPublicKey
                 address={address}
@@ -248,14 +250,14 @@ function App() {
               />
             </fieldset>
             <fieldset>
-              <legend>Messaging</legend>
+              <legend>Connecting</legend>
               <Messaging
                 recipients={publicKeys}
-                waku={waku}
                 messages={messages}
                 publicKey={encryptionKeyPair?.publicKey}
                 address={address}
                 provider={provider}
+                setter={setPublicKeys}
               />
             </fieldset>
             <fieldset>

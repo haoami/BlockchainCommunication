@@ -6,7 +6,7 @@ import {
   Select,
   TextField,
 } from "@material-ui/core";
-import React, { ChangeEvent, KeyboardEvent, useState } from "react";
+import React, { ChangeEvent, Dispatch, KeyboardEvent, SetStateAction, useState } from "react";
 import type { RelayNode } from "@waku/interfaces";
 import { createEncoder } from "@waku/message-encryption/ecies";
 import { PrivateMessage } from "./wire";
@@ -29,18 +29,18 @@ const useStyles = makeStyles((theme) => ({
 }));
 
 export interface Props {
-  waku: RelayNode | undefined;
   // address, public key, randoms seed
   recipients: Map<string, PublicKeyMessageObj>;
   publicKey: Uint8Array | undefined;
   address: string | undefined;
   provider: Web3Provider | undefined;
+  setter: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>;
 }
 
-export default function SendMessage({ waku, recipients, publicKey, address, provider }: Props) {
+export default function SendMessage({ recipients, publicKey, address, provider, setter }: Props) {
   const classes = useStyles();
   const [recipient, setRecipient] = useState<string>("");
-  const [message, setMessage] = useState<string>();
+  // const [message, setMessage] = useState<string>();
 
   const handleRecipientChange = (
     event: ChangeEvent<{ name?: string; value: unknown }>
@@ -48,9 +48,9 @@ export default function SendMessage({ waku, recipients, publicKey, address, prov
     setRecipient(event.target.value as string);
   };
 
-  const handleMessageChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setMessage(event.target.value);
-  };
+  // const handleMessageChange = (event: ChangeEvent<HTMLInputElement>) => {
+  //   setMessage(event.target.value);
+  // };
 
   const items = Array.from(recipients.keys()).map((recipient) => {
     return (
@@ -60,30 +60,30 @@ export default function SendMessage({ waku, recipients, publicKey, address, prov
     );
   });
 
-  const keyDownHandler = async (event: KeyboardEvent<HTMLInputElement>) => {
-    if (
-      event.key === "Enter" &&
-      !event.altKey &&
-      !event.ctrlKey &&
-      !event.shiftKey
-    ) {
-      if (!waku) return;
-      if (!recipient) return;
-      if (!message) return;
-      const publicKey = recipients.get(recipient)?.encryptionPK;
-      const salt = recipients.get(recipient)?.kdSalt;
-      if (!publicKey) return;
-      if (!salt) return;
+  // const keyDownHandler = async (event: KeyboardEvent<HTMLInputElement>) => {
+  //   if (
+  //     event.key === "Enter" &&
+  //     !event.altKey &&
+  //     !event.ctrlKey &&
+  //     !event.shiftKey
+  //   ) {
+  //     if (!waku) return;
+  //     if (!recipient) return;
+  //     if (!message) return;
+  //     const publicKey = recipients.get(recipient)?.encryptionPK;
+  //     const salt = recipients.get(recipient)?.kdSalt;
+  //     if (!publicKey) return;
+  //     if (!salt) return;
 
-      // 按下回车键发送消息
-      sendMessage(waku, recipient, publicKey, salt, message, (res) => {
-        if (res) {
-          console.log("callback called with", res);
-          setMessage("");
-        }
-      });
-    }
-  };
+  //     // 按下回车键发送消息
+  //     sendMessage(waku, recipient, publicKey, salt, message, (res) => {
+  //       if (res) {
+  //         console.log("callback called with", res);
+  //         setMessage("");
+  //       }
+  //     });
+  //   }
+  // };
 
   return (
     <div
@@ -105,13 +105,14 @@ export default function SendMessage({ waku, recipients, publicKey, address, prov
         </Select>
       </FormControl>
       <ReplyPublicKey
-        address={address}
+        myAddr={address}
+        targetAddr={recipient}
         selectedRecipients={recipients.get(recipient)}
         selfPublicKey={publicKey}
-        waku={waku}
         provider={provider}
+        setter={setter}
       />
-      <TextField
+      {/* <TextField
         id="message-input"
         label="Message"
         variant="filled"
@@ -119,7 +120,7 @@ export default function SendMessage({ waku, recipients, publicKey, address, prov
         onKeyDown={keyDownHandler}
         value={message}
         disabled={!recipients.get(recipient)?.kdSalt}
-      />
+      /> */}
     </div>
   );
 }

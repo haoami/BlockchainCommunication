@@ -1,4 +1,4 @@
-import Messages, { Message } from "./Messages";
+import { Message } from "./Messages";
 import type { RelayNode } from "@waku/interfaces";
 import SendMessage from "./SendMessage";
 import { makeStyles } from "@material-ui/core";
@@ -6,6 +6,7 @@ import { PublicKeyMessageObj } from "../waku";
 import { TypedDataSigner } from "@ethersproject/abstract-signer";
 import { sign } from "crypto";
 import { Web3Provider } from "@ethersproject/providers";
+import { Dispatch, SetStateAction } from "react";
 
 const useStyles = makeStyles((t)=>({
   root: {
@@ -19,21 +20,21 @@ const useStyles = makeStyles((t)=>({
 }));
 
 interface Props {
-  waku: RelayNode | undefined;
   recipients: Map<string, PublicKeyMessageObj>;
   messages: Message[];
   publicKey: Uint8Array | undefined;
   address: string | undefined;
   provider: Web3Provider | undefined;
+  setter: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>;
 }
 
-export default function Messaging({ waku, recipients, messages, publicKey, address, provider}: Props) {
+export default function Messaging({ recipients, messages, publicKey, address, provider, setter}: Props) {
   const classes = useStyles();
 
   return (
     <div className={classes.root}>
-      <SendMessage recipients={recipients} waku={waku} publicKey={publicKey} address={address} provider={provider} />
-      <Messages messages={messages} />
+      <SendMessage recipients={recipients} publicKey={publicKey} address={address} provider={provider} setter={setter} />
+      {/* <Messages messages={messages} /> */}
     </div>
   );
 }

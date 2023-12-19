@@ -8,6 +8,7 @@ import { equals } from "uint8arrays/equals";
 import type { TypedDataSigner } from "@ethersproject/abstract-signer";
 import { bytesToHex, hexToBytes, utf8ToBytes } from "@waku/utils/bytes";
 import { pbkdf2 } from 'pbkdf2';
+import { resolve } from "path";
 
 
 export const PublicKeyMessageEncryptionKey = hexToBytes(
@@ -23,9 +24,104 @@ export interface KeyPair {
  * Generate new encryption key pair.
  */
 export async function generateEncryptionKeyPair(): Promise<KeyPair> {
-  const privateKey = generatePrivateKey();
-  const publicKey = getPublicKey(privateKey);
-  return { privateKey, publicKey };
+    const keyPair = await window.crypto.subtle.generateKey(
+      {
+        name: 'RSA-OAEP',
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+        hash: 'SHA-256',
+      },
+      true,
+      ['encrypt', 'decrypt']
+    );
+    const privateKey = arrayBufferToUint8Array(await exportPrivateCryptoKeyToBuffer(keyPair.privateKey));
+    const publicKey = arrayBufferToUint8Array(await exportPublickCryptoKeyToBuffer(keyPair.publicKey));
+    return { privateKey, publicKey };
+}
+
+async function exportPublickCryptoKeyToBuffer(key: CryptoKey): Promise<ArrayBuffer> {
+  const exportedKey = await window.crypto.subtle.exportKey("spki", key);
+  return exportedKey;
+}
+
+async function exportPrivateCryptoKeyToBuffer(key: CryptoKey): Promise<ArrayBuffer> {
+  const exportedKey = await window.crypto.subtle.exportKey("pkcs8", key);
+  return exportedKey;
+}
+
+function arrayBufferToUint8Array(buffer: ArrayBuffer): Uint8Array {
+  return new Uint8Array(buffer);
+}
+
+export async function importPublicKeyUint8ArrayToCryptoKey(uint8Array: Uint8Array): Promise<CryptoKey> {
+  const keyUsages: KeyUsage[] = ['encrypt'];
+  const importedKey = await window.crypto.subtle.importKey('spki', uint8Array, 
+  {
+    name: "RSA-OAEP",
+    hash: "SHA-256",
+  },
+  true, keyUsages);
+  return importedKey;
+}
+
+export async function importPrivateKeyUint8ArrayToCryptoKey(uint8Array: Uint8Array): Promise<CryptoKey> {
+  const keyUsages: KeyUsage[] = ['decrypt'];
+  const importedKey = await window.crypto.subtle.importKey('pkcs8', uint8Array,
+  {
+    name: "RSA-OAEP",
+    hash: "SHA-256",
+  },
+  true, keyUsages);
+  return importedKey;
+}
+
+export async function encryptWithPublicKey(publicKey: CryptoKey, plaintext: Uint8Array): Promise<Uint8Array> {
+  const encryptedBuffer = await window.crypto.subtle.encrypt({ name: 'RSA-OAEP' }, publicKey, plaintext);
+  const res = new Uint8Array(encryptedBuffer);
+  return res;
+}
+
+export async function decryptWithPrivateKey(privateKey: CryptoKey, encryptedBuffer: Uint8Array): Promise<Uint8Array> {
+  const decryptedBuffer = await window.crypto.subtle.decrypt({ name: 'RSA-OAEP' }, privateKey, encryptedBuffer);
+  const res = new Uint8Array(decryptedBuffer);
+  return res;
+}
+
+export async function importAESKeyUint8ArrayToCryptoKey(uint8Array: Uint8Array): Promise<CryptoKey> {
+  const importedKey = await window.crypto.subtle.importKey(
+    'raw',
+    uint8Array,
+    { name: 'AES-CBC' },
+    true,
+    ['encrypt', 'decrypt']
+  );
+  return importedKey;
+}
+
+export async function encryptCBC(key: CryptoKey, iv: Uint8Array, encoded: Uint8Array): Promise<Uint8Array> {
+  const encryptedBuffer = await window.crypto.subtle.encrypt(
+    {
+      name: "AES-CBC",
+      iv: iv,
+    },
+    key,
+    encoded,
+  );
+  const res = new Uint8Array(encryptedBuffer);
+  return res;
+}
+
+export async function decryptCBC(key: CryptoKey, iv: Uint8Array, encoded: Uint8Array): Promise<Uint8Array> {
+  const decryptedBuffer = await window.crypto.subtle.decrypt(
+    {
+      name: "AES-CBC",
+      iv: iv,
+    },
+    key,
+    encoded,
+  );
+  const res = new Uint8Array(decryptedBuffer);
+  return res;
 }
 
 /**
