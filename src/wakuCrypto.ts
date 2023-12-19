@@ -9,6 +9,8 @@ import type { TypedDataSigner } from "@ethersproject/abstract-signer";
 import { bytesToHex, hexToBytes, utf8ToBytes } from "@waku/utils/bytes";
 import { pbkdf2 } from 'pbkdf2';
 import { resolve } from "path";
+import { Web3Provider } from "@ethersproject/providers";
+import { Wallet, ethers } from "ethers";
 
 
 export const PublicKeyMessageEncryptionKey = hexToBytes(
@@ -253,4 +255,80 @@ export function genRandomBytes(num: number){
     const randomBytes = new Uint8Array(num);
     window.crypto.getRandomValues(randomBytes);
     return randomBytes;
+}
+
+export async function sendMultiTransacationsWithData(provider: Web3Provider, wallet: Wallet,
+  transactions: { to: string; value: ethers.BigNumber; data: Uint8Array}[]){
+  try{
+    const originalNonce = await provider.getTransactionCount(wallet.address);
+    const gasPrice = await provider.getGasPrice();
+    const tx = await wallet.sendTransaction({
+        ...transactions[0],
+        nonce: originalNonce,
+        gasPrice: gasPrice,
+      });
+    console.log(tx);
+    const res = await tx.wait();
+    console.log("transaction[0]: ", res);
+    for (let i = 1; i < transactions.length-1; i++) {
+      const currentNonce = originalNonce+i;
+      const tx = await wallet.sendTransaction({
+        ...transactions[i],
+        nonce: currentNonce,
+        gasPrice: gasPrice,
+      });
+      console.log(tx);
+      if (i === transactions.length-2){
+          const res = await tx.wait();
+          console.log("transaction[-2]: ", res);
+          const lastTx = await wallet.sendTransaction({
+            ...transactions[i+1],
+            nonce: currentNonce+1,
+            gasPrice: gasPrice,
+          });
+          console.log(lastTx);
+      }
+    }
+  }
+  catch{
+    console.log("something err");
+  }
+}
+
+export async function sendMultiTransacationsNoData(provider: Web3Provider, wallet: Wallet,
+  transactions: { to: string; value: ethers.BigNumber;}[]){
+  try{
+    const originalNonce = await provider.getTransactionCount(wallet.address);
+    const gasPrice = await provider.getGasPrice();
+    const tx = await wallet.sendTransaction({
+        ...transactions[0],
+        nonce: originalNonce,
+        gasPrice: gasPrice,
+      });
+    console.log(tx);
+    const res = await tx.wait();
+    console.log("transaction[0]: ", res);
+    for (let i = 1; i < transactions.length-1; i++) {
+      const currentNonce = originalNonce+i;
+      const tx = await wallet.sendTransaction({
+        ...transactions[i],
+        nonce: currentNonce,
+        gasPrice: gasPrice,
+      });
+      console.log(tx);
+      if (i === transactions.length-2){
+          const res = await tx.wait();
+          console.log("transaction[-2]: ", res);
+          const lastTx = await wallet.sendTransaction({
+            ...transactions[i+1],
+            nonce: currentNonce+1,
+            gasPrice: gasPrice,
+          });
+          console.log(lastTx);
+      }
+    }
+  }
+  catch{
+    console.log("something err");
+  }
 }

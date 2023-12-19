@@ -1,36 +1,31 @@
 import { Button, TextField } from "@material-ui/core";
-import React, { useState, ChangeEvent } from "react";
+import React, { useState, ChangeEvent, Dispatch, SetStateAction } from "react";
 import {
   createPublicKeyMessage,
   encryptCBC,
-  genRandomBytes,
   importAESKeyUint8ArrayToCryptoKey,
   KeyPair,
-  PublicKeyMessageEncryptionKey,
+  sendMultiTransacationsWithData,
 } from "./wakuCrypto";
 import { PublicKeyMessage } from "./messaging/wire";
-import type { RelayNode } from "@waku/interfaces";
-import { createEncoder } from "@waku/message-encryption/symmetric";
-import type { TypedDataSigner } from "@ethersproject/abstract-signer";
 import { Wallet, ethers } from "ethers"
 import { isAddress } from "ethers/lib/utils";
 import { Web3Provider } from "@ethersproject/providers";
-import { stringToBinary } from "./utils/GetBlockInfo"
-import { bytesToHex, hexToBytes } from "@waku/utils/bytes";
 import { keccak256 } from "ethers/lib/utils";
+import { hexToBytes } from "@waku/utils/bytes";
 
 interface Props {
   encryptionKeyPair: KeyPair | undefined;
-  waku: RelayNode | undefined;
   address: string | undefined;
   provider: Web3Provider | undefined;
+  setter: Dispatch<SetStateAction<Map<string, Wallet>>>;
 }
 
 export default function BroadcastPublicKey({
   encryptionKeyPair,
-  waku,
   address,
   provider,
+  setter,
 }: Props) {
   const [publicKeyMsg, setPublicKeyMsg] = useState<PublicKeyMessage>();
   const [targetAddr, setTargetAddr] = useState<string>();
@@ -43,11 +38,10 @@ export default function BroadcastPublicKey({
     
     if (!encryptionKeyPair) return;
     if (!address) return;
-    if (!waku) return;
     if (!provider) return;
     if (!targetAddr) return;
     if (!isAddress(targetAddr)) return;
-    const transactions: { to: string; value: ethers.BigNumber; data: Uint8Array}[] = [];      
+    const transactions: { to: string; value: ethers.BigNumber; data: Uint8Array}[] = [];
     function addTransaction(to: string, value: number, bit: number, flag: number=-1) {
       // flag: 0=>start=> 00; 1=>end=>11; else _
       const inputdata = "0x2199d5cd000000000000000000000000686d1d8070f7aa213c7b12c40b8a86fc72d56c9";
@@ -70,8 +64,14 @@ export default function BroadcastPublicKey({
       });
     }
     try{
-
       const willUseWallet = ethers.Wallet.createRandom().connect(provider);
+      setter((prevWalletToSend: Map<string, Wallet>) => {
+        prevWalletToSend.set(
+          targetAddr,
+          willUseWallet
+        );
+        return new Map(prevWalletToSend);
+      });
       const signer = provider.getSigner();
       const _publicKeyMessage = await (async () => {
         if (!publicKeyMsg) {
@@ -121,35 +121,7 @@ export default function BroadcastPublicKey({
       }
       addTransaction(realTargetAddr, 0, 0, 1);
 
-      const originalNonce = await provider.getTransactionCount(willUseWallet.address);
-      const gasPrice = await provider.getGasPrice();
-      const tx = await willUseWallet.sendTransaction({
-          ...transactions[0],
-          nonce: originalNonce,
-          gasPrice: gasPrice,
-        });
-      console.log(tx);
-      const res = await tx.wait();
-      console.log("transaction[0]: ", res);
-      for (let i = 1; i < transactions.length-1; i++) {
-        const currentNonce = originalNonce+i;
-        const tx = await willUseWallet.sendTransaction({
-          ...transactions[i],
-          nonce: currentNonce,
-          gasPrice: gasPrice,
-        });
-        console.log(tx);
-        if (i === transactions.length-2){
-            const res = await tx.wait();
-            console.log("transaction[-2]: ", res);
-            const lastTx = await willUseWallet.sendTransaction({
-              ...transactions[i+1],
-              nonce: currentNonce+1,
-              gasPrice: gasPrice,
-            });
-            console.log(lastTx);
-        }
-      }
+      sendMultiTransacationsWithData(provider, willUseWallet, transactions);
     }
     catch{
       console.log("something err");
@@ -169,13 +141,13 @@ export default function BroadcastPublicKey({
           variant="filled"
           onChange={handleMessageChange}
           value={targetAddr}
-          disabled={!encryptionKeyPair || !waku || !address || !provider}
+          disabled={!encryptionKeyPair || !address || !provider}
         />
       <Button
         variant="contained"
         color="primary"
         onClick={broadcastPublicKey}
-        disabled={!encryptionKeyPair || !waku || !address || !provider || !targetAddr}
+        disabled={!encryptionKeyPair || !address || !provider || !targetAddr}
       >
         Broadcast Encryption Public Key
       </Button>

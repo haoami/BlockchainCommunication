@@ -14,8 +14,7 @@ const useStyles = makeStyles((t)=>({
     alignItems: "center",
     flexDirection: "column",
     margin: "5px",
-    justifyContent: 'space-between', // 或者使用 'space-around'，具体根据需要选择
-    height: '100%',
+    justifyContent: 'space-between',
   }
 }));
 
@@ -28,7 +27,7 @@ interface Props {
   setter: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>;
 }
 
-export default function Messaging({ recipients, messages, publicKey, address, provider, setter}: Props) {
+export default function Connecting({ recipients, messages, publicKey, address, provider, setter}: Props) {
   const classes = useStyles();
 
   return (

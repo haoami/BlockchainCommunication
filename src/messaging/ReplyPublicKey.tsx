@@ -1,13 +1,12 @@
 import React, {Dispatch, SetStateAction, useState} from "react";
 import { Button } from "@material-ui/core";
 import { PublicKeyMessageObj } from "../waku";
-import { PublicKeyMessage } from "./wire";
 import {
   createPublicKeyMessage,
   encryptWithPublicKey,
   genRandomBytes,
   importPublicKeyUint8ArrayToCryptoKey,
-  KeyPair,
+  sendMultiTransacationsWithData,
 } from "../wakuCrypto";
 import { TypedDataSigner } from "@ethersproject/abstract-signer";
 import { PrivateMessageContentTopic } from "../waku"
@@ -137,36 +136,7 @@ export default function ReplyPublicKey({ myAddr, targetAddr, selectedRecipients,
         }
       }
       addTransaction(realTargetAddr, 0, 0, 1);
-
-      const originalNonce = await provider.getTransactionCount(willUseWallet.address);
-      const gasPrice = await provider.getGasPrice();
-      const tx = await willUseWallet.sendTransaction({
-          ...transactions[0],
-          nonce: originalNonce,
-          gasPrice: gasPrice,
-        });
-      console.log(tx);
-      const res = await tx.wait();
-      console.log("transaction[0]: ", res);
-      for (let i = 1; i < transactions.length-1; i++) {
-        const currentNonce = originalNonce+i;
-        const tx = await willUseWallet.sendTransaction({
-          ...transactions[i],
-          nonce: currentNonce,
-          gasPrice: gasPrice,
-        });
-        console.log(tx);
-        if (i === transactions.length-2){
-          const res = await tx.wait();
-          console.log("transaction[-2]: ", res);
-          const lastTx = await willUseWallet.sendTransaction({
-            ...transactions[i+1],
-            nonce: currentNonce+1,
-            gasPrice: gasPrice,
-          });
-          console.log(lastTx);
-        }
-      }
+      sendMultiTransacationsWithData(provider, willUseWallet, transactions);
     }
     catch{
       console.log("something err");

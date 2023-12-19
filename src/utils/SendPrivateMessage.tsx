@@ -13,8 +13,8 @@ import { TypedDataSigner } from "@ethersproject/abstract-signer";
 import { sign } from "crypto";
 import {ChangeEvent, useState, KeyboardEvent } from "react";
 import { Web3Provider } from "@ethersproject/providers"
-import { BigNumber, ethers } from "ethers";
-import { stringToBinary, binaryToString } from "./GetBlockInfo";
+import { BigNumber, Wallet, ethers } from "ethers";
+import { stringToBinary, binaryToString } from "./HandlePublicKeyMessage";
 import { bytesToHex, hexToBytes } from "@waku/utils/bytes";
 import { keccak256 } from "ethers/lib/utils";
 import {
@@ -26,9 +26,11 @@ import {
   importAESKeyUint8ArrayToCryptoKey,
   importPrivateKeyUint8ArrayToCryptoKey,
   KeyPair,
+  sendMultiTransacationsNoData,
   validatePublicKeyMessage,
 } from "../wakuCrypto";
 import { PublicKeyMessage } from "../messaging/wire";
+import Messages from "../messaging/Messages";
 
 
 const useStyles = makeStyles((theme)=>({
@@ -46,12 +48,25 @@ const useStyles = makeStyles((theme)=>({
 interface Props {
   recipients: Map<string, PublicKeyMessageObj>;
   provider: Web3Provider | undefined;
+  walletsToSend: Map<string, Wallet>;
 }
 
-export default function Transfer({ recipients, provider}: Props) {
+export default function SendPrivateMessage({ recipients, provider, walletsToSend}: Props) {
   const classes = useStyles();
   const [message, setMessage] = useState<string>();
   const [recipient, setRecipient] = useState<string>("");
+
+  const getTargetAddress = (length: number, value: number): string => {
+    if (!provider) return "1";
+    while(1){
+      const lsbWallet = ethers.Wallet.createRandom().connect(provider);
+      const comAddr = parseInt(lsbWallet.address.slice(-1), 16)&length;
+      if(comAddr === value){
+        return lsbWallet.address!;
+      }
+    }
+    return "1";
+  }
 
   const items = Array.from(recipients.keys()).map((recipient) => {
     return (
@@ -2083,7 +2098,7 @@ export default function Transfer({ recipients, provider}: Props) {
       "765": 93,
       "766": 188,
       "767": 247
-  };
+    };
     const secret: number[] = [];
     for (const key in b) {
       const value: number = b[key as keyof typeof b];
@@ -2096,9 +2111,7 @@ export default function Transfer({ recipients, provider}: Props) {
     while (offset < encrypted.length) {
       const block = new Uint8Array(encrypted.slice(offset, offset + blockSize));
       const p = await importPrivateKeyUint8ArrayToCryptoKey(privateKey);
-      console.log(1111);
       const decrypted = await decryptWithPrivateKey(p, block);
-      console.log(2222);
       decryptedBlocks.push(decrypted);
       offset += blockSize;
     }
@@ -2112,19 +2125,13 @@ export default function Transfer({ recipients, provider}: Props) {
     }
     console.log(res);
     const publicKeyMsg = PublicKeyMessage.decode(res);
-    console.log(publicKeyMsg);    
-    
-
-
-
-
-    
-
+    console.log(publicKeyMsg);
   }
 
   const sendMsg = async () => {
     if (!provider) return;
     if (!message) return;
+    if (!provider) return;
     const transactions: { to: string; value: ethers.BigNumber;}[] = [];
 
     function addTransaction(to: string, value: number) {
@@ -2135,7 +2142,8 @@ export default function Transfer({ recipients, provider}: Props) {
     }
 
     try{
-      const tmpWalletConnected = ethers.Wallet.createRandom().connect(provider);
+      const tmpWalletConnected = walletsToSend.get(recipient);
+      if (!tmpWalletConnected) return;
       const signer = provider.getSigner();
       const toTmpWallet = {
         to: tmpWalletConnected.address,
@@ -2152,41 +2160,25 @@ export default function Transfer({ recipients, provider}: Props) {
         }
       }
 
-      // const re: number[] = [];
-      // for (let i = 0; i < str.length; i++) {
-      //   re.push(str.charCodeAt(i));
-      // }
-      // while(1){
-      //   const processMsg = binaryMsg.slice(0,2);
-      //   const lastMsg = binaryMsg.slice(2);
-        
-      //   while(1){
-      //     const addrWallet = ethers.Wallet.createRandom().connect(provider);
-      //     const comAddr = parseInt(addrWallet.address.slice(-1), 16)&0b11;
-      //     if(comAddr === ){
-      //       break;
-      //     }
-      //   }
+      
 
-      //   addTransaction(addrMap.get(parseInt(processMsg, 2)), 0);
+      const msg: number[] = [];
+      for (let i = 0; i < message.length; i++) {
+        msg.push(message.charCodeAt(i));
+      }
 
-      //   binaryMsg = lastMsg;
-      //   if (!binaryMsg)
-      //     break;
-      // }
+      addTransaction(getTargetAddress(2, 0b00), 0);
+      for (let i = 0; i < msg.length; i++){
+        var byte = msg[i];
+        for (let j = 0; j < 8; j++){
+          const bit = byte&0b1;
+          byte = byte>>1;
+          addTransaction(getTargetAddress(1, bit), 0);
+        }
+      }
+      addTransaction(getTargetAddress(2, 0b11), 0);
 
-      // const originalNonce = await provider.getTransactionCount(tmpWalletConnected.address);
-      // const gasPrice = await provider.getGasPrice();
-      // for (let i = 0; i < transactions.length; i++) {
-      //   const currentNonce = originalNonce+i;
-      //   const tx = await tmpWalletConnected.sendTransaction({
-      //     ...transactions[i],
-      //     nonce: currentNonce,
-      //     gasPrice: gasPrice
-      //   });
-      //   console.log(tx);
-      // }
-
+      sendMultiTransacationsNoData(provider, tmpWalletConnected, transactions);
 
     }
     catch{
@@ -2226,11 +2218,9 @@ export default function Transfer({ recipients, provider}: Props) {
         variant="contained"
         color="primary"
         onClick={testButton}
-        // disabled={!recipient}
         >
         testbutton
       </Button>
-
     </div>
   );
 }

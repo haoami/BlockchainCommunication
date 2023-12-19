@@ -6,7 +6,7 @@ import type { RelayNode, IDecoder } from "@waku/interfaces";
 import { createDecoder as createSymmetricDecoder } from "@waku/message-encryption/symmetric";
 import { createDecoder, DecodedMessage } from "@waku/message-encryption/ecies";
 import { KeyPair, PublicKeyMessageEncryptionKey } from "./wakuCrypto";
-import { Message } from "./messaging/Messages";
+import Messages, { Message } from "./messaging/Messages";
 import "fontsource-roboto";
 import { AppBar, IconButton, Toolbar, Typography } from "@material-ui/core";
 import KeyPairHandling from "./key_pair_handling/KeyPairHandling";
@@ -18,19 +18,17 @@ import {
 import { teal, purple, green } from "@material-ui/core/colors";
 import WifiIcon from "@material-ui/icons/Wifi";
 import BroadcastPublicKey from "./BroadcastPublicKey";
-import Messaging from "./messaging/Messaging";
+import Connecting from "./messaging/Connecting";
 import {
   PrivateMessageContentTopic,
-  handlePrivateMessage,
-  handlePublicKeyMessage,
-  initWaku,
-  PublicKeyContentTopic,
 } from "./waku";
 import { Web3Provider } from "@ethersproject/providers/src.ts/web3-provider";
 import ConnectWallet from "./ConnectWallet";
 import {PublicKeyMessageObj} from "./waku";
-import Transfer from "./utils/Transfer";
-import { processBlock } from "./utils/GetBlockInfo"
+import SendPrivateMessage from "./utils/SendPrivateMessage";
+import { handlePublicKeyMessage } from "./utils/HandlePublicKeyMessage"
+import { handlePrivateMessage } from "./utils/HandlePrivateMessage"
+import { Wallet } from "ethers";
 
 
 const theme = createMuiTheme({
@@ -72,120 +70,32 @@ const useStyles = makeStyles({
 });
 
 function App() {
-  const [waku, setWaku] = useState<RelayNode>();
   const [provider, setProvider] = useState<Web3Provider>();
   const [encryptionKeyPair, setEncryptionKeyPair] = useState<
     KeyPair | undefined
   >();
-  const [privateMessageDecoder, setPrivateMessageDecoder] =
-    useState<IDecoder<DecodedMessage>>();
   const [publicKeys, setPublicKeys] = useState<Map<string, PublicKeyMessageObj>>(
     new Map()
   );
-  const [sessionKeys, setSessionKeys] = useState<Map<string, Uint8Array>>(
+  const [sendSessionKeys, setSendSessionKeys] = useState<Map<string, Uint8Array>>(
+    new Map()
+  );
+  const [receiveSessionKeys, setReceiveSessionKeys] = useState<Map<string, Uint8Array>>(
+    new Map()
+  );
+  const [walletsToSend, setWalletsToSend] = useState<Map<string, Wallet>>(
     new Map()
   );
   const [messages, setMessages] = useState<Message[]>([]);
   const [address, setAddress] = useState<string>();
-  const [peerStats, setPeerStats] = useState<{
-    relayPeers: number;
-  }>({
-    relayPeers: 0,
-  });
 
   const classes = useStyles();
-
-  // Waku initialization
-  useEffect(() => {
-    (async () => {
-      if (waku) return;
-
-      const _waku = await initWaku();
-      console.log("waku: ready");
-      setWaku(_waku);
-    })().catch((e) => {
-      console.error("Failed to initiate Waku", e);
-    });
-  }, [waku]);
-
-  useEffect(() => {
-    if (!waku) return;
-
-    const observerPublicKeyMessage = handlePublicKeyMessage.bind(
-      {},
-      address,
-      setPublicKeys
-    );
-
-    const publicKeyMessageDecoder = createSymmetricDecoder(
-      PublicKeyContentTopic,
-      PublicKeyMessageEncryptionKey
-    );
-
-    let unsubscribe: undefined | (() => Promise<void>);
-
-    waku.relay.subscribe(publicKeyMessageDecoder, observerPublicKeyMessage);
-
-    return function cleanUp() {
-      if (typeof unsubscribe === "undefined") return;
-
-      unsubscribe().then(
-        () => {
-          console.log("unsubscribed to ", PublicKeyContentTopic);
-        },
-        (e) => console.error("Failed to unsubscribe", e)
-      );
-    };
-  }, [waku, address]);
-
-  useEffect(() => {
-    if (!encryptionKeyPair) return;
-
-    setPrivateMessageDecoder(
-      createDecoder(PrivateMessageContentTopic, encryptionKeyPair.privateKey)
-    );
-  }, [encryptionKeyPair]);
-
-  useEffect(() => {
-    if (!waku) return;
-    if (!privateMessageDecoder) return;
-    if (!address) return;
-
-    const observerPrivateMessage = handlePrivateMessage.bind(
-      {},
-      setPublicKeys,
-      setMessages,
-      address
-    );
-
-    let unsubscribe: undefined | (() => Promise<void>);
-
-    waku.relay.subscribe(privateMessageDecoder, observerPrivateMessage);
-
-    return function cleanUp() {
-      if (typeof unsubscribe === "undefined") return;
-      unsubscribe().catch((e) => console.error("Failed to unsubscribe", e));
-    };
-  }, [waku, address, privateMessageDecoder]);
-
-  useEffect(() => {
-    if (!waku) return;
-
-    const interval = setInterval(async () => {
-      const peers = waku.relay.gossipSub.getPeers();
-
-      setPeerStats({
-        relayPeers: peers.length,
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [waku]);
 
   useEffect(() => {
     if (!provider) return;
     if (!address) return;
     if (!encryptionKeyPair) return;
-    provider.on('block', processBlock.bind(
+    provider.on('block', handlePublicKeyMessage.bind(
       {},
       address,
       provider,
@@ -193,6 +103,19 @@ function App() {
       setPublicKeys)
     );
   }, [encryptionKeyPair]);
+
+  // useEffect(() => {
+  //   if (!provider) return;
+  //   if (!address) return;
+  //   if (!encryptionKeyPair) return;
+  //   provider.on('block', handlePrivateMessage.bind(
+  //     {},
+  //     address,
+  //     provider,
+  //     encryptionKeyPair.publicKey,
+  //     setPublicKeys)
+  //   );
+  // }, [encryptionKeyPair]);
 
   let addressDisplay = "";
   if (address) {
@@ -212,13 +135,10 @@ function App() {
               aria-label="waku-status"
             >
               <WifiIcon
-                color={waku ? undefined : "disabled"}
-                style={waku ? { color: green[500] } : {}}
+                color={provider ? undefined : "disabled"}
+                style={provider ? { color: green[500] } : {}}
               />
             </IconButton>
-            <Typography className={classes.peers} aria-label="connected-peers">
-              (Relay) Peers: {peerStats.relayPeers}
-            </Typography>
             <Typography variant="h6" className={classes.title}>
             Blockchain covert communication(by kk/ay/f0)
             </Typography>
@@ -245,13 +165,13 @@ function App() {
               <BroadcastPublicKey
                 address={address}
                 encryptionKeyPair={encryptionKeyPair}
-                waku={waku}
                 provider={provider}
+                setter={setWalletsToSend}
               />
             </fieldset>
             <fieldset>
               <legend>Connecting</legend>
-              <Messaging
+              <Connecting
                 recipients={publicKeys}
                 messages={messages}
                 publicKey={encryptionKeyPair?.publicKey}
@@ -261,11 +181,13 @@ function App() {
               />
             </fieldset>
             <fieldset>
-              <legend>TestTransfer</legend>
-              <Transfer
+              <legend>Messaging</legend>
+              <SendPrivateMessage
                 recipients={publicKeys}
                 provider={provider}
+                walletsToSend={walletsToSend}
               />
+              <Messages messages={messages} />
             </fieldset>
           </main>
         </div>
