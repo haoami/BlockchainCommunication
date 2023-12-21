@@ -1,21 +1,17 @@
-import React, {Dispatch, SetStateAction, useState} from "react";
+import React, {Dispatch, SetStateAction } from "react";
 import { Button } from "@material-ui/core";
-import { PublicKeyMessageObj } from "../waku";
 import {
+  PublicKeyMessageObj,
   createPublicKeyMessage,
   encryptWithPublicKey,
   genRandomBytes,
   importPublicKeyUint8ArrayToCryptoKey,
-  sendMultiTransacationsWithData,
+  sendMultiTransactions,
 } from "../wakuCrypto";
-import { TypedDataSigner } from "@ethersproject/abstract-signer";
-import { PrivateMessageContentTopic } from "../waku"
-import { createEncoder } from "@waku/message-encryption/ecies";
-import type { RelayNode } from "@waku/interfaces";
-import {ethers} from "ethers";
+import {Wallet, ethers} from "ethers";
 import { Web3Provider } from "@ethersproject/providers";
 import { keccak256 } from "ethers/lib/utils";
-import { bytesToHex, hexToBytes } from "@waku/utils/bytes";
+import { hexToBytes } from "@waku/utils/bytes";
 
 
 export interface Props {
@@ -25,9 +21,20 @@ export interface Props {
   selfPublicKey: Uint8Array | undefined;
   provider: Web3Provider | undefined;
   setter: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>;
+  setWalletsToSend: Dispatch<SetStateAction<Map<string, Wallet>>>;
 }
 
-export default function ReplyPublicKey({ myAddr, targetAddr, selectedRecipients, selfPublicKey, provider, setter}: Props) {
+function isUint8ArrayAllZero(array: Uint8Array | undefined): boolean {
+  if (!array) return true;
+  for (let i = 0; i < array.length; i++) {
+    if (array[i] !== 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export default function ReplyPublicKey({ myAddr, targetAddr, selectedRecipients, selfPublicKey, provider, setter, setWalletsToSend}: Props) {
   const replyPKM = async () => {
     if (!myAddr) return;
     if (!targetAddr) return;
@@ -35,8 +42,8 @@ export default function ReplyPublicKey({ myAddr, targetAddr, selectedRecipients,
     if (!selfPublicKey) return;
     if (!provider) return;
 
-    const transactions: { to: string; value: ethers.BigNumber; data: Uint8Array}[] = [];
-    function addTransaction(to: string, value: number, bit: number, flag: number=-1) {
+    const transactions: Map<number, { to: string; value: ethers.BigNumber; data: Uint8Array}> = new Map();
+    function addTransaction(idx: number, to: string, value: number, bit: number, flag: number=-1) {
       // flag: 0=>start=> 00; 1=>end=>11; else _
       const inputdata = "0x2199d5cd000000000000000000000000686d1d8070f7aa213c7b12c40b8a86fc72d56c9";
       var data;
@@ -51,7 +58,7 @@ export default function ReplyPublicKey({ myAddr, targetAddr, selectedRecipients,
         // cnt+=1;
       }
       console.log(data);
-      transactions.push({
+      transactions.set(idx, {
         to: to,
         value: ethers.utils.parseEther(value.toString()),
         data: hexToBytes(data)
@@ -72,6 +79,13 @@ export default function ReplyPublicKey({ myAddr, targetAddr, selectedRecipients,
         return new Map(prevPks);
       });
       const willUseWallet = ethers.Wallet.createRandom().connect(provider);
+      setWalletsToSend((prevWalletToSend: Map<string, Wallet>) => {
+        prevWalletToSend.set(
+          targetAddr.toLowerCase(),
+          willUseWallet
+        );
+        return new Map(prevWalletToSend);
+      });
       const signer = provider.getSigner();
       const _replyPublicKeyMessage = await (async () => {
           const pkm = await createPublicKeyMessage(
@@ -126,17 +140,17 @@ export default function ReplyPublicKey({ myAddr, targetAddr, selectedRecipients,
       }
 
       const realTargetAddr = keccak256(targetAddr).slice(0,42);
-      addTransaction(realTargetAddr, 0, 0, 0);
+      addTransaction(0, realTargetAddr, 0, 0, 0);
       for(let i = 0; i < payload.length; i++){
         var bytes = payload[i];
         for(let j = 0; j < 8; j++){
           const bit = bytes&0b1;
-          addTransaction(realTargetAddr, 0, bit);
+          addTransaction(i*8+j+1, realTargetAddr, 0, bit);
           bytes=(bytes>>1);
         }
       }
-      addTransaction(realTargetAddr, 0, 0, 1);
-      sendMultiTransacationsWithData(provider, willUseWallet, transactions);
+      addTransaction(transactions.size+1, realTargetAddr, 0, 0, 1);
+      sendMultiTransactions(provider, willUseWallet, transactions);
     }
     catch{
       console.log("something err");
@@ -148,7 +162,7 @@ export default function ReplyPublicKey({ myAddr, targetAddr, selectedRecipients,
       variant="contained"
       color="primary"
       onClick={replyPKM}
-      disabled={!selfPublicKey}
+      disabled={!selfPublicKey || !isUint8ArrayAllZero(selectedRecipients?.kdSalt)}
       >
       CONNECT ESTABLISHMENT
     </Button>

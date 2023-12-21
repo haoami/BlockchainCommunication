@@ -1,12 +1,10 @@
 import { Message } from "./Messages";
-import type { RelayNode } from "@waku/interfaces";
 import SendMessage from "./SendMessage";
 import { makeStyles } from "@material-ui/core";
-import { PublicKeyMessageObj } from "../waku";
-import { TypedDataSigner } from "@ethersproject/abstract-signer";
-import { sign } from "crypto";
+import { PublicKeyMessageObj } from "../wakuCrypto";
 import { Web3Provider } from "@ethersproject/providers";
 import { Dispatch, SetStateAction } from "react";
+import { Wallet } from "ethers";
 
 const useStyles = makeStyles((t)=>({
   root: {
@@ -25,15 +23,15 @@ interface Props {
   address: string | undefined;
   provider: Web3Provider | undefined;
   setter: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>;
+  setWalletsToSend: Dispatch<SetStateAction<Map<string, Wallet>>>;
 }
 
-export default function Connecting({ recipients, messages, publicKey, address, provider, setter}: Props) {
+export default function Connecting({ recipients, messages, publicKey, address, provider, setter, setWalletsToSend}: Props) {
   const classes = useStyles();
 
   return (
     <div className={classes.root}>
-      <SendMessage recipients={recipients} publicKey={publicKey} address={address} provider={provider} setter={setter} />
-      {/* <Messages messages={messages} /> */}
+      <SendMessage recipients={recipients} publicKey={publicKey} address={address} provider={provider} setter={setter} setWalletsToSend={setWalletsToSend}/>
     </div>
   );
 }

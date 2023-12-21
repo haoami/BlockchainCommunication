@@ -2,7 +2,6 @@ import "@ethersproject/shims";
 
 import { PublicKeyMessage } from "./messaging/wire";
 import { generatePrivateKey, getPublicKey } from "@waku/message-encryption";
-import { PublicKeyContentTopic } from "./waku";
 import { keccak256, _TypedDataEncoder, recoverAddress } from "ethers/lib/utils";
 import { equals } from "uint8arrays/equals";
 import type { TypedDataSigner } from "@ethersproject/abstract-signer";
@@ -12,10 +11,11 @@ import { resolve } from "path";
 import { Web3Provider } from "@ethersproject/providers";
 import { Wallet, ethers } from "ethers";
 
-
-export const PublicKeyMessageEncryptionKey = hexToBytes(
-  keccak256(utf8ToBytes(PublicKeyContentTopic))
-);
+export type PublicKeyMessageObj = {
+  encryptionPK: Uint8Array,
+  kdSalt: Uint8Array,
+  willUseAddr: Uint8Array
+}
 
 export interface KeyPair {
   privateKey: Uint8Array;
@@ -233,7 +233,7 @@ export function validatePublicKeyMessage(msg: PublicKeyMessage): boolean {
  */
 export async function generateDeriveKey(password: string, salt: string): Promise<Uint8Array> {
   const iterations = 50000;
-  const keylen = 65;
+  const keylen = 16;
   const digest = 'sha256';
 
   return new Promise((resolve, reject) => {
@@ -257,78 +257,43 @@ export function genRandomBytes(num: number){
     return randomBytes;
 }
 
-export async function sendMultiTransacationsWithData(provider: Web3Provider, wallet: Wallet,
-  transactions: { to: string; value: ethers.BigNumber; data: Uint8Array}[]){
+export async function sendMultiTransactions(provider: Web3Provider, wallet: Wallet,
+  transactions: Map<number, { to: string; value: ethers.BigNumber; data?: Uint8Array}>): Promise<boolean> {
   try{
     const originalNonce = await provider.getTransactionCount(wallet.address);
     const gasPrice = await provider.getGasPrice();
+    const percentageIncrease = 1;
+    const increasedGasPrice = gasPrice.mul(1 + percentageIncrease);
     const tx = await wallet.sendTransaction({
-        ...transactions[0],
+        ...transactions.get(0),
         nonce: originalNonce,
-        gasPrice: gasPrice,
+        gasPrice: increasedGasPrice,
       });
     console.log(tx);
     const res = await tx.wait();
     console.log("transaction[0]: ", res);
-    for (let i = 1; i < transactions.length-1; i++) {
+    for (let i = 1; i < transactions.size-1; i++) {
       const currentNonce = originalNonce+i;
       const tx = await wallet.sendTransaction({
-        ...transactions[i],
+        ...transactions.get(i),
         nonce: currentNonce,
-        gasPrice: gasPrice,
+        gasPrice: increasedGasPrice,
       });
-      console.log(tx);
-      if (i === transactions.length-2){
+      if (i === transactions.size-2){
           const res = await tx.wait();
           console.log("transaction[-2]: ", res);
           const lastTx = await wallet.sendTransaction({
-            ...transactions[i+1],
+            ...transactions.get(i+1),
             nonce: currentNonce+1,
-            gasPrice: gasPrice,
+            gasPrice: increasedGasPrice,
           });
           console.log(lastTx);
       }
     }
+    return Promise.resolve(true);
   }
   catch{
     console.log("something err");
-  }
-}
-
-export async function sendMultiTransacationsNoData(provider: Web3Provider, wallet: Wallet,
-  transactions: { to: string; value: ethers.BigNumber;}[]){
-  try{
-    const originalNonce = await provider.getTransactionCount(wallet.address);
-    const gasPrice = await provider.getGasPrice();
-    const tx = await wallet.sendTransaction({
-        ...transactions[0],
-        nonce: originalNonce,
-        gasPrice: gasPrice,
-      });
-    console.log(tx);
-    const res = await tx.wait();
-    console.log("transaction[0]: ", res);
-    for (let i = 1; i < transactions.length-1; i++) {
-      const currentNonce = originalNonce+i;
-      const tx = await wallet.sendTransaction({
-        ...transactions[i],
-        nonce: currentNonce,
-        gasPrice: gasPrice,
-      });
-      console.log(tx);
-      if (i === transactions.length-2){
-          const res = await tx.wait();
-          console.log("transaction[-2]: ", res);
-          const lastTx = await wallet.sendTransaction({
-            ...transactions[i+1],
-            nonce: currentNonce+1,
-            gasPrice: gasPrice,
-          });
-          console.log(lastTx);
-      }
-    }
-  }
-  catch{
-    console.log("something err");
+    return Promise.reject(false);
   }
 }

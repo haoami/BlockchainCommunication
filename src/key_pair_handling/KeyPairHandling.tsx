@@ -1,10 +1,7 @@
 import { Button, TextField } from "@material-ui/core";
-import { LoadKeyPair } from "./LoadKeyPair";
-import { SaveKeyPair } from "./SaveKeyPair";
 import React, { useState } from "react";
 import { generateEncryptionKeyPair, KeyPair } from "../wakuCrypto";
 import { makeStyles } from "@material-ui/core/styles";
-import PasswordInput from "./PasswordInput";
 import { Web3Provider } from "@ethersproject/providers";
 
 const useStyles = makeStyles({
@@ -15,18 +12,7 @@ const useStyles = makeStyles({
     flexDirection: "column",
     margin: "5px",
   },
-  generate: { margin: "5px" },
-  storage: {
-    margin: "5px",
-  },
-  loadSave: {
-    display: "flex",
-    flexDirection: "row",
-    margin: "5px",
-  },
-  loadSaveButton: {
-    margin: "5px",
-  },
+  generate: { margin: "5px" }
 });
 
 export interface Props {
@@ -41,8 +27,6 @@ export default function KeyPairHandling({
   provider,
 }: Props) {
   const classes = useStyles();
-
-  const [password, setPassword] = useState<string>();
 
   const generateKeyPair = () => {
     if (encryptionKeyPair) return;

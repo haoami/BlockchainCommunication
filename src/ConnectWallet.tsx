@@ -1,8 +1,6 @@
 import { Button } from "@material-ui/core";
-import React from "react";
 import { ethers } from "ethers";
 import { Web3Provider } from "@ethersproject/providers/src.ts/web3-provider";
-import { keccak256 } from "ethers/lib/utils";
 
 declare let window: any;
 

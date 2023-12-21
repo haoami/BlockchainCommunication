@@ -1,11 +1,11 @@
-import { Button, TextField } from "@material-ui/core";
+import { Button, TextField, createMuiTheme, makeStyles } from "@material-ui/core";
 import React, { useState, ChangeEvent, Dispatch, SetStateAction } from "react";
 import {
   createPublicKeyMessage,
   encryptCBC,
   importAESKeyUint8ArrayToCryptoKey,
   KeyPair,
-  sendMultiTransacationsWithData,
+  sendMultiTransactions,
 } from "./wakuCrypto";
 import { PublicKeyMessage } from "./messaging/wire";
 import { Wallet, ethers } from "ethers"
@@ -13,6 +13,7 @@ import { isAddress } from "ethers/lib/utils";
 import { Web3Provider } from "@ethersproject/providers";
 import { keccak256 } from "ethers/lib/utils";
 import { hexToBytes } from "@waku/utils/bytes";
+import { purple, teal } from "@material-ui/core/colors";
 
 interface Props {
   encryptionKeyPair: KeyPair | undefined;
@@ -21,12 +22,35 @@ interface Props {
   setter: Dispatch<SetStateAction<Map<string, Wallet>>>;
 }
 
+const theme = createMuiTheme({
+  palette: {
+    primary: {
+      main: purple[500],
+    },
+    secondary: {
+      main: teal[600],
+    },
+  },
+});
+
+const useStyles = makeStyles({
+  textfield: {
+    height: '50px',
+    marginLeft: '90px',
+  },
+  button: {
+    margin: theme.spacing(1),
+    marginLeft: '10px',
+  },
+});
+
 export default function BroadcastPublicKey({
   encryptionKeyPair,
   address,
   provider,
   setter,
 }: Props) {
+  const classes = useStyles();
   const [publicKeyMsg, setPublicKeyMsg] = useState<PublicKeyMessage>();
   const [targetAddr, setTargetAddr] = useState<string>();
 
@@ -41,8 +65,9 @@ export default function BroadcastPublicKey({
     if (!provider) return;
     if (!targetAddr) return;
     if (!isAddress(targetAddr)) return;
-    const transactions: { to: string; value: ethers.BigNumber; data: Uint8Array}[] = [];
-    function addTransaction(to: string, value: number, bit: number, flag: number=-1) {
+    
+    const transactions: Map<number, { to: string; value: ethers.BigNumber; data: Uint8Array}> = new Map();
+    function addTransaction(idx: number, to: string, value: number, bit: number, flag: number=-1) {
       // flag: 0=>start=> 00; 1=>end=>11; else _
       const inputdata = "0x2199d5cd000000000000000000000000686d1d8070f7aa213c7b12c40b8a86fc72d56c9";
       var data;
@@ -56,18 +81,18 @@ export default function BroadcastPublicKey({
         data = inputdata+(bit|8);
         // cnt+=1;
       }
-      console.log(data);
-      transactions.push({
+      transactions.set(idx, {
         to: to,
         value: ethers.utils.parseEther(value.toString()),
-        data: hexToBytes(data)
+        data: hexToBytes(data),
       });
     }
+
     try{
       const willUseWallet = ethers.Wallet.createRandom().connect(provider);
       setter((prevWalletToSend: Map<string, Wallet>) => {
         prevWalletToSend.set(
-          targetAddr,
+          targetAddr.toLowerCase(),
           willUseWallet
         );
         return new Map(prevWalletToSend);
@@ -110,18 +135,18 @@ export default function BroadcastPublicKey({
       }
 
       const realTargetAddr = keccak256(targetAddr).slice(0, 42);
-      addTransaction(realTargetAddr, 0, 0, 0);
+      addTransaction(0, realTargetAddr, 0, 0, 0);
       for(let i = 0; i < payload.length; i++){
         var bytes = payload[i];
         for(let j = 0; j < 8; j++){
           const bit = bytes&0b1;
-          addTransaction(realTargetAddr, 0, bit);
+          addTransaction(i*8+j+1, realTargetAddr, 0, bit);
           bytes=(bytes>>1);
         }
       }
-      addTransaction(realTargetAddr, 0, 0, 1);
+      addTransaction(transactions.size, realTargetAddr, 0, 0, 1);
 
-      sendMultiTransacationsWithData(provider, willUseWallet, transactions);
+      sendMultiTransactions(provider, willUseWallet, transactions);
     }
     catch{
       console.log("something err");
@@ -135,7 +160,7 @@ export default function BroadcastPublicKey({
       justifyContent: "center",
       flexWrap: "wrap",
       }}>
-      <TextField
+      <TextField className={classes.textfield}
           id="address-input"
           label="TARGET ADDR"
           variant="filled"
@@ -147,6 +172,7 @@ export default function BroadcastPublicKey({
         variant="contained"
         color="primary"
         onClick={broadcastPublicKey}
+        className={classes.button}
         disabled={!encryptionKeyPair || !address || !provider || !targetAddr}
       >
         Broadcast Encryption Public Key

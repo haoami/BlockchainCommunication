@@ -2,13 +2,10 @@ import "@ethersproject/shims";
 
 import React, { useEffect, useState } from "react";
 import "./App.css";
-import type { RelayNode, IDecoder } from "@waku/interfaces";
-import { createDecoder as createSymmetricDecoder } from "@waku/message-encryption/symmetric";
-import { createDecoder, DecodedMessage } from "@waku/message-encryption/ecies";
-import { KeyPair, PublicKeyMessageEncryptionKey } from "./wakuCrypto";
+import { KeyPair } from "./wakuCrypto";
 import Messages, { Message } from "./messaging/Messages";
 import "fontsource-roboto";
-import { AppBar, IconButton, Toolbar, Typography } from "@material-ui/core";
+import { AppBar, Button, IconButton, Toolbar, Typography } from "@material-ui/core";
 import KeyPairHandling from "./key_pair_handling/KeyPairHandling";
 import {
   createMuiTheme,
@@ -19,15 +16,11 @@ import { teal, purple, green } from "@material-ui/core/colors";
 import WifiIcon from "@material-ui/icons/Wifi";
 import BroadcastPublicKey from "./BroadcastPublicKey";
 import Connecting from "./messaging/Connecting";
-import {
-  PrivateMessageContentTopic,
-} from "./waku";
 import { Web3Provider } from "@ethersproject/providers/src.ts/web3-provider";
 import ConnectWallet from "./ConnectWallet";
-import {PublicKeyMessageObj} from "./waku";
+import {PublicKeyMessageObj} from "./wakuCrypto";
 import SendPrivateMessage from "./utils/SendPrivateMessage";
-import { handlePublicKeyMessage } from "./utils/HandlePublicKeyMessage"
-import { handlePrivateMessage } from "./utils/HandlePrivateMessage"
+import { handlePublicKeyorPrivateMessage } from "./utils/HandlePublicKeyMessage"
 import { Wallet } from "ethers";
 
 
@@ -67,6 +60,12 @@ const useStyles = makeStyles({
     flexGrow: 1,
   },
   peers: {},
+  buttonleft: {
+    marginRight: theme.spacing(2),
+  },
+  buttonright: {
+    marginLeft: theme.spacing(2),
+  },
 });
 
 function App() {
@@ -91,37 +90,37 @@ function App() {
 
   const classes = useStyles();
 
-  useEffect(() => {
-    if (!provider) return;
-    if (!address) return;
-    if (!encryptionKeyPair) return;
-    provider.on('block', handlePublicKeyMessage.bind(
-      {},
-      address,
-      provider,
-      encryptionKeyPair.privateKey,
-      setPublicKeys)
-    );
-  }, [encryptionKeyPair]);
-
-  // useEffect(() => {
-  //   if (!provider) return;
-  //   if (!address) return;
-  //   if (!encryptionKeyPair) return;
-  //   provider.on('block', handlePrivateMessage.bind(
-  //     {},
-  //     address,
-  //     provider,
-  //     encryptionKeyPair.publicKey,
-  //     setPublicKeys)
-  //   );
-  // }, [encryptionKeyPair]);
-
   let addressDisplay = "";
   if (address) {
     addressDisplay =
       address;
       // address.substr(0, 6) + "..." + address.substr(address.length - 4, 4);
+  }
+
+  const handleBlockEvent = (blockNumber: number | undefined) => {
+    if (!provider || !address || !encryptionKeyPair) return;
+    handlePublicKeyorPrivateMessage(
+      address,
+      provider,
+      encryptionKeyPair.privateKey,
+      publicKeys,
+      receiveSessionKeys,
+      setReceiveSessionKeys,
+      setMessages,
+      setPublicKeys,
+      blockNumber
+    );
+  };
+
+  const startListen = async () => {
+    if (!provider) return;
+    provider.on('block', handleBlockEvent);
+    console.log("start listen");
+  }
+  const stopListen = async () => {
+    if (!provider) return;
+    provider.removeAllListeners('block');
+    console.log("stop listen");
   }
 
   return (
@@ -150,10 +149,28 @@ function App() {
           <main className={classes.main}>
             <fieldset>
               <legend>Wallet</legend>
+              <Button
+                variant="contained"
+                color="primary"
+                className={classes.buttonleft}
+                onClick={startListen}
+                disabled={!provider}
+                >
+                START LISTEN
+              </Button>
               <ConnectWallet
                 setAddress={setAddress}
                 setProvider={setProvider}
               />
+              <Button
+                variant="contained"
+                color="primary"
+                className={classes.buttonright}
+                onClick={stopListen}
+                disabled={!provider}
+                >
+                STOP LISTEN
+              </Button>
             </fieldset>
             <fieldset>
               <legend>Encryption Key Pair</legend>
@@ -178,6 +195,7 @@ function App() {
                 address={address}
                 provider={provider}
                 setter={setPublicKeys}
+                setWalletsToSend={setWalletsToSend}
               />
             </fieldset>
             <fieldset>
@@ -186,6 +204,8 @@ function App() {
                 recipients={publicKeys}
                 provider={provider}
                 walletsToSend={walletsToSend}
+                sessionKeys={sendSessionKeys}
+                setter={setSendSessionKeys}
               />
               <Messages messages={messages} />
             </fieldset>

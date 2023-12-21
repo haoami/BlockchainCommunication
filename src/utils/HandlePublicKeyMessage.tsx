@@ -1,24 +1,12 @@
-import type { RelayNode } from "@waku/interfaces";
-import {
-    FormControl,
-    makeStyles,
-    Select,
-    MenuItem,
-    Button,
-    InputLabel
-} from "@material-ui/core";
-import { PublicKeyMessageObj } from "../waku";
-import { TypedDataSigner } from "@ethersproject/abstract-signer";
-import { sign } from "crypto";
-import {ChangeEvent, useState, Dispatch, SetStateAction} from "react";
+import { PublicKeyMessageObj } from "../wakuCrypto";
+import { Dispatch, SetStateAction} from "react";
 import { Web3Provider } from "@ethersproject/providers";
-import { Block, TransactionResponse } from "@ethersproject/abstract-provider";
 import { keccak256 } from "ethers/lib/utils";
 import { bytesToHex, hexToBytes } from "@waku/utils/bytes";
 import { PublicKeyMessage } from "../messaging/wire";
 import { equals } from "uint8arrays/equals";
-import { decryptCBC, decryptWithPrivateKey, importAESKeyUint8ArrayToCryptoKey, importPrivateKeyUint8ArrayToCryptoKey, importPublicKeyUint8ArrayToCryptoKey, validatePublicKeyMessage } from "../wakuCrypto";
-import { AddRounded } from "@material-ui/icons";
+import { decryptCBC, decryptWithPrivateKey, generateDeriveKey, importAESKeyUint8ArrayToCryptoKey, importPrivateKeyUint8ArrayToCryptoKey, importPublicKeyUint8ArrayToCryptoKey, validatePublicKeyMessage } from "../wakuCrypto";
+import { Message } from "../messaging/Messages";
 
 class AsyncQueue {
   private queue: { task: () => Promise<number>; blockNum: number }[] = [];
@@ -46,13 +34,43 @@ class AsyncQueue {
   }
 }
 
+class Mutex {
+  private queue: (() => void)[] = [];
+  private locked: boolean = false;
+
+  async lock(): Promise<void> {
+    return new Promise(resolve => {
+      const acquireLock = () => {
+        if (!this.locked) {
+          this.locked = true;
+          resolve();
+        } else {
+          this.queue.push(acquireLock);
+        }
+      };
+
+      acquireLock();
+    });
+  }
+
+  unlock(): void {
+    if (this.queue.length > 0) {
+      const nextLock = this.queue.shift();
+      nextLock!();
+    } else {
+      this.locked = false;
+    }
+  }
+}
+
+const mutex = new Mutex();
 
 
 var receiving = false;
 var secretMap: Map<number, number> = new Map();
 var flag: string[] = [];
-var myPrivateKey: Uint8Array = new Uint8Array(0);
-
+var mapSecretMap: Map<string, Map<number, number>> = new Map();
+var mapReceiving: string[] = [];
 const blockQueue = new AsyncQueue();
 
 async function handlePKMwithNoEncrypt(encrypted: Uint8Array, myAddress: string, setter: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>): Promise<boolean> {
@@ -60,7 +78,6 @@ async function handlePKMwithNoEncrypt(encrypted: Uint8Array, myAddress: string, 
   const key = await importAESKeyUint8ArrayToCryptoKey(hexToBytes(myAddress.slice(2, 34)));
   const iv = hexToBytes(myAddress.slice(-33, -1));
   const payload = await decryptCBC(key, iv, encrypted);
-  console.log(payload);
   const publicKeyMsg = PublicKeyMessage.decode(payload);
   if (!publicKeyMsg) return Promise.reject(false);
   if (!publicKeyMsg.ethAddress) return Promise.reject(false);
@@ -72,7 +89,7 @@ async function handlePKMwithNoEncrypt(encrypted: Uint8Array, myAddress: string, 
   if (res) {
     setter((prevPks: Map<string, PublicKeyMessageObj>) => {
       prevPks.set(
-        bytesToHex(publicKeyMsg.ethAddress).toLowerCase(),
+        '0x'+bytesToHex(publicKeyMsg.ethAddress).toLowerCase(),
         {
           encryptionPK: publicKeyMsg.encryptionPublicKey,
           kdSalt: publicKeyMsg.randomSeed,
@@ -87,7 +104,6 @@ async function handlePKMwithNoEncrypt(encrypted: Uint8Array, myAddress: string, 
 
 async function handlePKMwithPKEncrypt(payload: Uint8Array, myAddress: string, setter: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>, privateKey: Uint8Array): Promise<boolean> {
   console.log("start handlePKMwithPKEncrypt");
-  console.log(payload);
 
   let offset = 0;
   const blockSize = 256;
@@ -118,7 +134,7 @@ async function handlePKMwithPKEncrypt(payload: Uint8Array, myAddress: string, se
   if (res) {
     setter((prevPks: Map<string, PublicKeyMessageObj>) => {
       prevPks.set(
-        bytesToHex(publicKeyMsg.ethAddress).toLowerCase(),
+        '0x'+bytesToHex(publicKeyMsg.ethAddress).toLowerCase(),
         {
           encryptionPK: publicKeyMsg.encryptionPublicKey,
           kdSalt: publicKeyMsg.randomSeed,
@@ -131,539 +147,241 @@ async function handlePKMwithPKEncrypt(payload: Uint8Array, myAddress: string, se
   return Promise.resolve(true);
 }
 
-async function processBlockNumber(blockNum: number, provider: Web3Provider,
-  setter: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>,
-  myAddr: string, broadCastAddr: string, privateKey: Uint8Array): Promise<number>{
-  
-  const block = await provider.getBlock(blockNum);
-  // console.log('start processing ', blockNum);
-  for (const transactionHash of block.transactions){
-    const transaction = await provider.getTransaction(transactionHash);
-    if (!transaction)  continue;
-    if (!transaction.to) continue;
-    if (transaction.to.toLowerCase() === broadCastAddr.toLowerCase()){
-      try{
-        console.log('nonce: ', transaction.nonce);
-        const data = transaction.data;
-        const keyData = hexToBytes(data.slice(-2))[0];
-        const last2bit = keyData&0b11;
-        if (last2bit === 0b11 && receiving){
-          receiving = false;
-          const secret: number[] = [];
-          console.log("accept down");
-          console.log(secretMap);
-          for(let i = 1; i <= secretMap.size; i+=8){
-            var oneByte = 0;
-            for(let j = i; j < i+8; j++){
-              const bit = secretMap.get(j);
-              if (bit === undefined){
-                console.log("not key: ", j);
-                return Promise.resolve(-1);
-              }
-              oneByte += bit<<((j-1)%8);
-            }
-            secret.push(oneByte);
-          }
-          console.log(secret);
-          handlePKMwithNoEncrypt(Uint8Array.from(secret), myAddr, setter)
-            .then(() => {
-              console.log("Successfully decrypt with no encrypt");
-            })
-            .catch((error) => {
-              console.log("Fail to decrypt with no encrypt: ", error);
-              handlePKMwithPKEncrypt(Uint8Array.from(secret), myAddr, setter, privateKey)
-              .then(() => {
-                console.log("Successfully decrypt with privateKey");
-              })
-              .catch((error) => {
-                console.log("Fail to decrypt with privateKey:", error);
-              });
-            });
-          secretMap.clear();
-        }
-        if (receiving){
-          secretMap.set(transaction.nonce, last2bit&0b1);
-          console.log(secretMap);
-        }
-        if (last2bit === 0b00 && !receiving){
-          console.log("start accepting");
-          receiving = true;
-          secretMap.clear();
-        }
-      }
-      catch{
-        console.log("something err");
-      }
+async function handleEncryptedMsg(payload: Uint8Array,
+  myAddr: string,
+  realFromAddr: string,
+  salt: Uint8Array,
+  privateKey: Uint8Array,
+  receiveSessionKeys: Map<string, Uint8Array>,
+  setReceiveSessionKeys: Dispatch<SetStateAction<Map<string, Uint8Array>>>): Promise<string>{
+    console.log("start handleEncryptedMsg");
+
+    let offset = 0;
+    const blockSize = 256;
+    let decryptedBlocks = [];
+    while (offset < payload.length) {
+      const block = new Uint8Array(payload.slice(offset, offset + blockSize));
+      const p = await importPrivateKeyUint8ArrayToCryptoKey(privateKey);
+      const decrypted = await decryptWithPrivateKey(p, block);
+      decryptedBlocks.push(decrypted);
+      offset += blockSize;
     }
-  }
-  // console.log("block ", blockNum, "down");
-  return Promise.resolve(blockNum);
+    const tot = decryptedBlocks.length*0xb0;
+    const decryptedArray = new Uint8Array(tot);
+    offset = 0;
+    for( const value of decryptedBlocks){
+      decryptedArray.set(value, offset);
+      offset+=0xb0;
+    }
+
+    var sessionKey: Uint8Array;
+    if (receiveSessionKeys.has(realFromAddr)){
+      const lastSessionKey = receiveSessionKeys.get(realFromAddr);
+      if (!lastSessionKey) return Promise.reject("fail");
+      sessionKey = await generateDeriveKey(bytesToHex(lastSessionKey), bytesToHex(salt));
+    }
+    else{
+      sessionKey = await generateDeriveKey((realFromAddr+myAddr).toLowerCase(), bytesToHex(salt));
+    }
+    setReceiveSessionKeys((prevSessionKey: Map<string, Uint8Array>) => {
+      prevSessionKey.set(
+        realFromAddr.toLowerCase(),
+        sessionKey
+      );
+      return new Map(prevSessionKey);
+    });
+    const decoder = new TextDecoder();
+    const key = await importAESKeyUint8ArrayToCryptoKey(sessionKey);
+    const iv = hexToBytes(myAddr.slice(-33, -1));
+    const aesDecrypted = await decryptCBC(key, iv, decryptedArray);
+
+    /**
+     * uncomment if for test, without rsa could be faster
+     */       
+    // const aesDecrypted = await decryptCBC(key, iv, payload);
+
+
+    console.log("aesDecrypted: ", aesDecrypted);
+    const decoded = decoder.decode(aesDecrypted);
+    console.log(decoded);
+
+    return Promise.resolve(decoded);
 }
 
-export async function handlePublicKeyMessage(
+async function processBlockNumber(
+  blockNum: number,
   myAddr: string,
   provider: Web3Provider,
   privateKey: Uint8Array,
-  setter: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>,
+  publicKeys: Map<string, PublicKeyMessageObj>,
+  receiveSessionKeys: Map<string, Uint8Array>,
+  setReceiveSessionKeys: Dispatch<SetStateAction<Map<string, Uint8Array>>>,
+  setMessages: Dispatch<SetStateAction<Message[]>>,
+  setPublicKeys: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>): Promise<number>{
+  
+  const broadCastAddr = keccak256(myAddr).slice(0,42).toLowerCase();
+  const block = await provider.getBlock(blockNum);
+  console.log('start processing ', blockNum);
+  await Promise.all(block.transactions.map(async (transactionHash) => {
+      const transaction = await provider.getTransaction(transactionHash);
+      if (!transaction)  return Promise.resolve();
+      if (!transaction.to) return Promise.resolve();
+      if (!transaction.from) return Promise.resolve();
+      const fromAddress = transaction.from;
+      const toAddress = transaction.to;
+      if (transaction.to.toLowerCase() === broadCastAddr.toLowerCase()){
+        try{
+          const data = transaction.data;
+          const keyData = hexToBytes(data.slice(-2))[0];
+          const last2bit = keyData&0b11;
+          if (last2bit === 0b11 && receiving){
+            receiving = false;
+            const secret: number[] = [];
+            console.log("accept publicKey done");
+            console.log(secretMap);
+            const keys = Array.from(secretMap.keys());
+            const minKey = Math.min(...keys);
+
+            for(let i = minKey; i < secretMap.size; i+=8){
+              var oneByte = 0;
+              for(let j = i; j < i+8; j++){
+                const bit = secretMap.get(j);
+                if (bit === undefined){
+                  console.log("not key: ", j);
+                  return Promise.resolve(-1);
+                }
+                oneByte += bit<<((j-minKey)%8);
+              }
+              secret.push(oneByte);
+            }
+            // console.log(secret);
+            handlePKMwithNoEncrypt(Uint8Array.from(secret), myAddr, setPublicKeys)
+              .then(() => {
+                console.log("Successfully decrypt with no encrypt");
+              })
+              .catch((error) => {
+                console.log("Fail to decrypt with no encrypt: ", error);
+                handlePKMwithPKEncrypt(Uint8Array.from(secret), myAddr, setPublicKeys, privateKey)
+                .then(() => {
+                  console.log("Successfully decrypt with privateKey");
+                })
+                .catch((error) => {
+                  console.log("Fail to decrypt with privateKey:", error);
+                });
+              });
+            secretMap.clear();
+          }
+          if (receiving){
+            await mutex.lock();
+            secretMap.set(transaction.nonce, last2bit&0b1);
+            mutex.unlock();
+          }
+          if (last2bit === 0b00 && !receiving){
+            console.log("start accepting publicKey");
+            receiving = true;
+            secretMap.clear();
+          }
+        }
+        catch{
+          console.log("something err");
+        }
+      }
+
+      publicKeys.forEach(async (PKMObj, realFromAddr) => {
+        if (PKMObj.willUseAddr.toString() === hexToBytes(fromAddress).toString()){
+          // console.log(PKMObj);
+          console.log('nonce: ', transaction.nonce);
+          const keyData = hexToBytes(toAddress.slice(-2))[0];
+          const last2bit = keyData&0b11;
+          // console.log('last2bit: ', last2bit);
+          if (last2bit === 0b11 && mapReceiving.includes(fromAddress)){
+            const secret: number[] = [];
+            const secretMap = mapSecretMap.get(fromAddress);
+            if (secretMap === undefined) return;
+            
+            console.log("accept privateMessage done");
+            // console.log(secretMap);
+            const keys = Array.from(secretMap.keys());
+            const minKey = Math.min(...keys);
+            for(let i = minKey; i < minKey+secretMap.size; i+=8){
+              var oneByte = 0;
+              for(let j = i; j < i+8; j++){
+                const bit = secretMap.get(j);
+                if (bit === undefined){
+                  console.log("not key: ", j);
+                  return Promise.resolve(-1);
+                }
+                oneByte += bit<<((j-minKey)%8);
+              }
+              secret.push(oneByte);
+            }
+            // console.log(secret);
+
+            const message = await handleEncryptedMsg(Uint8Array.from(secret),
+              myAddr,
+              realFromAddr,
+              PKMObj.kdSalt,
+              privateKey,
+              receiveSessionKeys,
+              setReceiveSessionKeys);
+            const timestamp = new Date();
+            const msg = fromAddress.substr(0, 4) + "..." + fromAddress.substr(fromAddress.length - 4, 4)+": "+message;
+            setMessages((prevMsgs: Message[]) => {
+              const copy = prevMsgs.slice();
+              copy.push({
+                text: msg,
+                timestamp: timestamp,
+              });
+              return copy;
+            });
+            
+
+            mapSecretMap.get(fromAddress)?.clear();
+            mapReceiving = mapReceiving.filter(value => value !== fromAddress);
+          }
+          if (mapReceiving.includes(fromAddress)){
+            const secretMap = mapSecretMap.get(fromAddress);
+            if (secretMap === undefined) return;
+            await mutex.lock();
+            secretMap.set(transaction.nonce, last2bit&0b1);
+            mutex.unlock();
+            mapSecretMap.set(fromAddress, secretMap);
+            console.log(mapSecretMap);
+          }
+          if (last2bit === 0b00 && !mapReceiving.includes(fromAddress)){
+            console.log("start accepting privateMessage");
+            mapReceiving.push(fromAddress);
+            const emptyMap: Map<number, number> = new Map();
+            mapSecretMap.set(fromAddress, emptyMap);
+          }
+        }
+      });
+    }));
+  // console.log("block ", blockNum, "done");
+  return Promise.resolve(blockNum);
+}
+
+export async function handlePublicKeyorPrivateMessage(
+  myAddr: string,
+  provider: Web3Provider,
+  privateKey: Uint8Array,
+  publicKeys: Map<string, PublicKeyMessageObj>,
+  receiveSessionKeys: Map<string, Uint8Array>,
+  setReceiveSessionKeys: Dispatch<SetStateAction<Map<string, Uint8Array>>>,
+  setMessages: Dispatch<SetStateAction<Message[]>>,
+  setPublicKeys: Dispatch<SetStateAction<Map<string, PublicKeyMessageObj>>>,
   blockNumber: number | undefined) {
   
   if (!blockNumber) return;
   if (!myAddr) return;
   if (!privateKey) return;
-  if (!myPrivateKey)
-    myPrivateKey = new Uint8Array(myPrivateKey);
-  if (flag.indexOf(myAddr) === -1){
-    if (myAddr.toLowerCase() === "0x9bca44ab3e2ae6c5b9b11f88bd217d79ab16d00f"){
-        const a = {
-          "0": 170,
-          "1": 148,
-          "2": 159,
-          "3": 226,
-          "4": 64,
-          "5": 255,
-          "6": 217,
-          "7": 53,
-          "8": 119,
-          "9": 188,
-          "10": 94,
-          "11": 242,
-          "12": 217,
-          "13": 81,
-          "14": 31,
-          "15": 107,
-          "16": 64,
-          "17": 12,
-          "18": 209,
-          "19": 200,
-          "20": 163,
-          "21": 75,
-          "22": 244,
-          "23": 205,
-          "24": 129,
-          "25": 6,
-          "26": 184,
-          "27": 121,
-          "28": 245,
-          "29": 188,
-          "30": 18,
-          "31": 220,
-          "32": 194,
-          "33": 207,
-          "34": 69,
-          "35": 89,
-          "36": 84,
-          "37": 104,
-          "38": 0,
-          "39": 44,
-          "40": 114,
-          "41": 202,
-          "42": 42,
-          "43": 38,
-          "44": 142,
-          "45": 213,
-          "46": 80,
-          "47": 22,
-          "48": 235,
-          "49": 71,
-          "50": 74,
-          "51": 81,
-          "52": 195,
-          "53": 83,
-          "54": 108,
-          "55": 197,
-          "56": 47,
-          "57": 17,
-          "58": 59,
-          "59": 16,
-          "60": 71,
-          "61": 224,
-          "62": 201,
-          "63": 72,
-          "64": 17,
-          "65": 92,
-          "66": 111,
-          "67": 199,
-          "68": 190,
-          "69": 161,
-          "70": 37,
-          "71": 192,
-          "72": 218,
-          "73": 93,
-          "74": 253,
-          "75": 84,
-          "76": 192,
-          "77": 66,
-          "78": 111,
-          "79": 57,
-          "80": 194,
-          "81": 93,
-          "82": 70,
-          "83": 39,
-          "84": 156,
-          "85": 181,
-          "86": 84,
-          "87": 104,
-          "88": 116,
-          "89": 48,
-          "90": 1,
-          "91": 165,
-          "92": 44,
-          "93": 21,
-          "94": 241,
-          "95": 30,
-          "96": 14,
-          "97": 134,
-          "98": 195,
-          "99": 3,
-          "100": 107,
-          "101": 135,
-          "102": 247,
-          "103": 178,
-          "104": 121,
-          "105": 120,
-          "106": 215,
-          "107": 52,
-          "108": 100,
-          "109": 229,
-          "110": 118,
-          "111": 86,
-          "112": 40,
-          "113": 163,
-          "114": 133,
-          "115": 214,
-          "116": 237,
-          "117": 24,
-          "118": 133,
-          "119": 246,
-          "120": 117,
-          "121": 253,
-          "122": 94,
-          "123": 244,
-          "124": 161,
-          "125": 189,
-          "126": 151,
-          "127": 194,
-          "128": 112,
-          "129": 161,
-          "130": 37,
-          "131": 95,
-          "132": 115,
-          "133": 110,
-          "134": 149,
-          "135": 104,
-          "136": 139,
-          "137": 204,
-          "138": 245,
-          "139": 98,
-          "140": 120,
-          "141": 64,
-          "142": 3,
-          "143": 141,
-          "144": 84,
-          "145": 61,
-          "146": 148,
-          "147": 87,
-          "148": 3,
-          "149": 132,
-          "150": 202,
-          "151": 187,
-          "152": 205,
-          "153": 15,
-          "154": 237,
-          "155": 96,
-          "156": 210,
-          "157": 54,
-          "158": 137,
-          "159": 224,
-          "160": 8,
-          "161": 106,
-          "162": 132,
-          "163": 165,
-          "164": 28,
-          "165": 82,
-          "166": 201,
-          "167": 216,
-          "168": 136,
-          "169": 77,
-          "170": 146,
-          "171": 157,
-          "172": 242,
-          "173": 29,
-          "174": 93,
-          "175": 20,
-          "176": 141,
-          "177": 123,
-          "178": 47,
-          "179": 72,
-          "180": 100,
-          "181": 232,
-          "182": 62,
-          "183": 47,
-          "184": 149,
-          "185": 28,
-          "186": 45,
-          "187": 90,
-          "188": 193,
-          "189": 122,
-          "190": 12,
-          "191": 86,
-          "192": 223,
-          "193": 68,
-          "194": 251,
-          "195": 208,
-          "196": 17,
-          "197": 88,
-          "198": 136,
-          "199": 214,
-          "200": 51,
-          "201": 32,
-          "202": 129,
-          "203": 244,
-          "204": 188,
-          "205": 16,
-          "206": 119,
-          "207": 30,
-          "208": 108,
-          "209": 116,
-          "210": 15,
-          "211": 112,
-          "212": 174,
-          "213": 162,
-          "214": 194,
-          "215": 123,
-          "216": 120,
-          "217": 124,
-          "218": 143,
-          "219": 241,
-          "220": 134,
-          "221": 0,
-          "222": 52,
-          "223": 56,
-          "224": 40,
-          "225": 179,
-          "226": 130,
-          "227": 155,
-          "228": 29,
-          "229": 170,
-          "230": 209,
-          "231": 190,
-          "232": 151,
-          "233": 219,
-          "234": 34,
-          "235": 155,
-          "236": 201,
-          "237": 4,
-          "238": 225,
-          "239": 155,
-          "240": 49,
-          "241": 0,
-          "242": 31,
-          "243": 254,
-          "244": 11,
-          "245": 93,
-          "246": 115,
-          "247": 58,
-          "248": 102,
-          "249": 89,
-          "250": 154,
-          "251": 29,
-          "252": 150,
-          "253": 173,
-          "254": 64,
-          "255": 19,
-          "256": 222,
-          "257": 203,
-          "258": 233,
-          "259": 97,
-          "260": 126,
-          "261": 252,
-          "262": 53,
-          "263": 53,
-          "264": 117,
-          "265": 220,
-          "266": 225,
-          "267": 174,
-          "268": 124,
-          "269": 158,
-          "270": 233,
-          "271": 178,
-          "272": 66,
-          "273": 183,
-          "274": 194,
-          "275": 122,
-          "276": 120,
-          "277": 122,
-          "278": 203,
-          "279": 178,
-          "280": 98,
-          "281": 23,
-          "282": 98,
-          "283": 215,
-          "284": 155,
-          "285": 5,
-          "286": 181,
-          "287": 61,
-          "288": 120,
-          "289": 228,
-          "290": 163,
-          "291": 174,
-          "292": 40,
-          "293": 192,
-          "294": 7,
-          "295": 40,
-          "296": 172,
-          "297": 113,
-          "298": 112,
-          "299": 97,
-          "300": 173,
-          "301": 206,
-          "302": 225,
-          "303": 115,
-          "304": 122,
-          "305": 209,
-          "306": 28,
-          "307": 60,
-          "308": 123,
-          "309": 188,
-          "310": 210,
-          "311": 46,
-          "312": 69,
-          "313": 240,
-          "314": 89,
-          "315": 36,
-          "316": 73,
-          "317": 118,
-          "318": 56,
-          "319": 93,
-          "320": 19,
-          "321": 211,
-          "322": 166,
-          "323": 145,
-          "324": 3,
-          "325": 136,
-          "326": 51,
-          "327": 200,
-          "328": 21,
-          "329": 237,
-          "330": 203,
-          "331": 194,
-          "332": 196,
-          "333": 184,
-          "334": 42,
-          "335": 237,
-          "336": 107,
-          "337": 99,
-          "338": 87,
-          "339": 249,
-          "340": 179,
-          "341": 211,
-          "342": 125,
-          "343": 238,
-          "344": 36,
-          "345": 59,
-          "346": 1,
-          "347": 140,
-          "348": 225,
-          "349": 107,
-          "350": 207,
-          "351": 204,
-          "352": 33,
-          "353": 208,
-          "354": 73,
-          "355": 112,
-          "356": 131,
-          "357": 138,
-          "358": 121,
-          "359": 102,
-          "360": 90,
-          "361": 28,
-          "362": 68,
-          "363": 204,
-          "364": 226,
-          "365": 168,
-          "366": 137,
-          "367": 94,
-          "368": 170,
-          "369": 160,
-          "370": 22,
-          "371": 75,
-          "372": 85,
-          "373": 153,
-          "374": 193,
-          "375": 60,
-          "376": 117,
-          "377": 233,
-          "378": 108,
-          "379": 138,
-          "380": 166,
-          "381": 15,
-          "382": 115,
-          "383": 68,
-          "384": 113,
-          "385": 88,
-          "386": 139,
-          "387": 152,
-          "388": 239,
-          "389": 17,
-          "390": 185,
-          "391": 16,
-          "392": 232,
-          "393": 229,
-          "394": 156,
-          "395": 169,
-          "396": 37,
-          "397": 168,
-          "398": 56,
-          "399": 72,
-          "400": 205,
-          "401": 104,
-          "402": 165,
-          "403": 9,
-          "404": 206,
-          "405": 60,
-          "406": 155,
-          "407": 192,
-          "408": 31,
-          "409": 129,
-          "410": 5,
-          "411": 130,
-          "412": 43,
-          "413": 115,
-          "414": 192,
-          "415": 203,
-          "416": 169,
-          "417": 14,
-          "418": 195,
-          "419": 73,
-          "420": 81,
-          "421": 150,
-          "422": 83,
-          "423": 249,
-          "424": 46,
-          "425": 253,
-          "426": 239,
-          "427": 188,
-          "428": 142,
-          "429": 243,
-          "430": 128,
-          "431": 79,
-          "432": 180,
-          "433": 97,
-          "434": 36,
-          "435": 139,
-          "436": 18,
-          "437": 88,
-          "438": 178,
-          "439": 60,
-          "440": 189,
-          "441": 8,
-          "442": 22,
-          "443": 68,
-          "444": 55,
-          "445": 171,
-          "446": 177,
-          "447": 215
-      };
+
+  /**
+   * below is for test faster
+   */
+    var a = {};
+    var b = {};
+    if (myAddr.toLowerCase() === "xxx"){
       const secret: number[] = [];
       for (const key in a) {
         const value: number = a[key as keyof typeof a];
@@ -684,9 +402,9 @@ export async function handlePublicKeyMessage(
       console.log("Is Public Key Message valid?", res);
 
       if (res) {
-        setter((prevPks: Map<string, PublicKeyMessageObj>) => {
+        setPublicKeys((prevPks: Map<string, PublicKeyMessageObj>) => {
           prevPks.set(
-            bytesToHex(publicKeyMsg.ethAddress),
+            '0x'+bytesToHex(publicKeyMsg.ethAddress).toLowerCase(),
             {
               encryptionPK: publicKeyMsg.encryptionPublicKey,
               kdSalt: publicKeyMsg.randomSeed,
@@ -697,846 +415,62 @@ export async function handlePublicKeyMessage(
         });
       }
     }
-  //   if (myAddr.toLowerCase() === "0x862570693111db350a6376c095b7e57c7650e78d"){
-  //     const a = {
-  //       "0": 40,
-  //       "1": 83,
-  //       "2": 208,
-  //       "3": 156,
-  //       "4": 118,
-  //       "5": 153,
-  //       "6": 238,
-  //       "7": 179,
-  //       "8": 231,
-  //       "9": 153,
-  //       "10": 157,
-  //       "11": 30,
-  //       "12": 213,
-  //       "13": 116,
-  //       "14": 142,
-  //       "15": 81,
-  //       "16": 119,
-  //       "17": 199,
-  //       "18": 55,
-  //       "19": 160,
-  //       "20": 63,
-  //       "21": 50,
-  //       "22": 212,
-  //       "23": 77,
-  //       "24": 57,
-  //       "25": 132,
-  //       "26": 108,
-  //       "27": 20,
-  //       "28": 132,
-  //       "29": 36,
-  //       "30": 239,
-  //       "31": 77,
-  //       "32": 98,
-  //       "33": 224,
-  //       "34": 129,
-  //       "35": 167,
-  //       "36": 161,
-  //       "37": 107,
-  //       "38": 72,
-  //       "39": 40,
-  //       "40": 31,
-  //       "41": 84,
-  //       "42": 48,
-  //       "43": 40,
-  //       "44": 169,
-  //       "45": 23,
-  //       "46": 142,
-  //       "47": 191,
-  //       "48": 21,
-  //       "49": 40,
-  //       "50": 34,
-  //       "51": 13,
-  //       "52": 208,
-  //       "53": 172,
-  //       "54": 57,
-  //       "55": 88,
-  //       "56": 21,
-  //       "57": 11,
-  //       "58": 202,
-  //       "59": 165,
-  //       "60": 8,
-  //       "61": 94,
-  //       "62": 166,
-  //       "63": 162,
-  //       "64": 140,
-  //       "65": 109,
-  //       "66": 131,
-  //       "67": 198,
-  //       "68": 190,
-  //       "69": 109,
-  //       "70": 103,
-  //       "71": 148,
-  //       "72": 223,
-  //       "73": 252,
-  //       "74": 57,
-  //       "75": 143,
-  //       "76": 5,
-  //       "77": 128,
-  //       "78": 220,
-  //       "79": 5,
-  //       "80": 137,
-  //       "81": 128,
-  //       "82": 239,
-  //       "83": 128,
-  //       "84": 159,
-  //       "85": 227,
-  //       "86": 78,
-  //       "87": 227,
-  //       "88": 30,
-  //       "89": 55,
-  //       "90": 16,
-  //       "91": 218,
-  //       "92": 31,
-  //       "93": 147,
-  //       "94": 202,
-  //       "95": 55,
-  //       "96": 216,
-  //       "97": 15,
-  //       "98": 102,
-  //       "99": 46,
-  //       "100": 136,
-  //       "101": 227,
-  //       "102": 242,
-  //       "103": 22,
-  //       "104": 194,
-  //       "105": 79,
-  //       "106": 82,
-  //       "107": 55,
-  //       "108": 205,
-  //       "109": 255,
-  //       "110": 14,
-  //       "111": 207,
-  //       "112": 190,
-  //       "113": 152,
-  //       "114": 81,
-  //       "115": 109,
-  //       "116": 106,
-  //       "117": 109,
-  //       "118": 130,
-  //       "119": 1,
-  //       "120": 118,
-  //       "121": 144,
-  //       "122": 179,
-  //       "123": 236,
-  //       "124": 192,
-  //       "125": 54,
-  //       "126": 162,
-  //       "127": 234,
-  //       "128": 89,
-  //       "129": 35,
-  //       "130": 29,
-  //       "131": 222,
-  //       "132": 50,
-  //       "133": 93,
-  //       "134": 116,
-  //       "135": 103,
-  //       "136": 247,
-  //       "137": 223,
-  //       "138": 8,
-  //       "139": 162,
-  //       "140": 233,
-  //       "141": 142,
-  //       "142": 169,
-  //       "143": 176,
-  //       "144": 1,
-  //       "145": 233,
-  //       "146": 128,
-  //       "147": 187,
-  //       "148": 13,
-  //       "149": 211,
-  //       "150": 156,
-  //       "151": 109,
-  //       "152": 235,
-  //       "153": 175,
-  //       "154": 250,
-  //       "155": 136,
-  //       "156": 147,
-  //       "157": 54,
-  //       "158": 142,
-  //       "159": 110,
-  //       "160": 236,
-  //       "161": 140,
-  //       "162": 217,
-  //       "163": 35,
-  //       "164": 236,
-  //       "165": 99,
-  //       "166": 67,
-  //       "167": 13,
-  //       "168": 31,
-  //       "169": 83,
-  //       "170": 245,
-  //       "171": 103,
-  //       "172": 50,
-  //       "173": 16,
-  //       "174": 200,
-  //       "175": 217,
-  //       "176": 161,
-  //       "177": 109,
-  //       "178": 31,
-  //       "179": 147,
-  //       "180": 213,
-  //       "181": 86,
-  //       "182": 185,
-  //       "183": 179,
-  //       "184": 80,
-  //       "185": 90,
-  //       "186": 218,
-  //       "187": 41,
-  //       "188": 44,
-  //       "189": 249,
-  //       "190": 50,
-  //       "191": 169,
-  //       "192": 65,
-  //       "193": 219,
-  //       "194": 246,
-  //       "195": 58,
-  //       "196": 229,
-  //       "197": 107,
-  //       "198": 252,
-  //       "199": 99,
-  //       "200": 93,
-  //       "201": 106,
-  //       "202": 221,
-  //       "203": 196,
-  //       "204": 37,
-  //       "205": 82,
-  //       "206": 234,
-  //       "207": 51,
-  //       "208": 89,
-  //       "209": 250,
-  //       "210": 254,
-  //       "211": 17,
-  //       "212": 52,
-  //       "213": 245,
-  //       "214": 223,
-  //       "215": 101,
-  //       "216": 49,
-  //       "217": 234,
-  //       "218": 16,
-  //       "219": 220,
-  //       "220": 84,
-  //       "221": 16,
-  //       "222": 98,
-  //       "223": 180,
-  //       "224": 200,
-  //       "225": 154,
-  //       "226": 7,
-  //       "227": 67,
-  //       "228": 181,
-  //       "229": 117,
-  //       "230": 144,
-  //       "231": 200,
-  //       "232": 147,
-  //       "233": 72,
-  //       "234": 78,
-  //       "235": 164,
-  //       "236": 41,
-  //       "237": 183,
-  //       "238": 169,
-  //       "239": 62,
-  //       "240": 108,
-  //       "241": 128,
-  //       "242": 0,
-  //       "243": 234,
-  //       "244": 254,
-  //       "245": 77,
-  //       "246": 115,
-  //       "247": 128,
-  //       "248": 178,
-  //       "249": 252,
-  //       "250": 158,
-  //       "251": 255,
-  //       "252": 98,
-  //       "253": 71,
-  //       "254": 111,
-  //       "255": 74,
-  //       "256": 113,
-  //       "257": 7,
-  //       "258": 161,
-  //       "259": 248,
-  //       "260": 25,
-  //       "261": 8,
-  //       "262": 123,
-  //       "263": 38,
-  //       "264": 25,
-  //       "265": 130,
-  //       "266": 164,
-  //       "267": 120,
-  //       "268": 53,
-  //       "269": 158,
-  //       "270": 230,
-  //       "271": 2,
-  //       "272": 196,
-  //       "273": 12,
-  //       "274": 58,
-  //       "275": 8,
-  //       "276": 161,
-  //       "277": 208,
-  //       "278": 60,
-  //       "279": 65,
-  //       "280": 245,
-  //       "281": 159,
-  //       "282": 87,
-  //       "283": 50,
-  //       "284": 252,
-  //       "285": 35,
-  //       "286": 223,
-  //       "287": 186,
-  //       "288": 17,
-  //       "289": 13,
-  //       "290": 242,
-  //       "291": 99,
-  //       "292": 135,
-  //       "293": 191,
-  //       "294": 173,
-  //       "295": 87,
-  //       "296": 228,
-  //       "297": 250,
-  //       "298": 200,
-  //       "299": 0,
-  //       "300": 1,
-  //       "301": 168,
-  //       "302": 85,
-  //       "303": 134,
-  //       "304": 61,
-  //       "305": 224,
-  //       "306": 13,
-  //       "307": 58,
-  //       "308": 184,
-  //       "309": 126,
-  //       "310": 244,
-  //       "311": 224,
-  //       "312": 112,
-  //       "313": 241,
-  //       "314": 16,
-  //       "315": 1,
-  //       "316": 134,
-  //       "317": 76,
-  //       "318": 224,
-  //       "319": 227,
-  //       "320": 143,
-  //       "321": 117,
-  //       "322": 152,
-  //       "323": 166,
-  //       "324": 194,
-  //       "325": 163,
-  //       "326": 48,
-  //       "327": 173,
-  //       "328": 70,
-  //       "329": 200,
-  //       "330": 161,
-  //       "331": 153,
-  //       "332": 157,
-  //       "333": 106,
-  //       "334": 94,
-  //       "335": 72,
-  //       "336": 114,
-  //       "337": 116,
-  //       "338": 126,
-  //       "339": 227,
-  //       "340": 37,
-  //       "341": 243,
-  //       "342": 157,
-  //       "343": 56,
-  //       "344": 102,
-  //       "345": 8,
-  //       "346": 151,
-  //       "347": 170,
-  //       "348": 23,
-  //       "349": 235,
-  //       "350": 95,
-  //       "351": 52,
-  //       "352": 1,
-  //       "353": 0,
-  //       "354": 243,
-  //       "355": 128,
-  //       "356": 5,
-  //       "357": 61,
-  //       "358": 190,
-  //       "359": 26,
-  //       "360": 7,
-  //       "361": 160,
-  //       "362": 166,
-  //       "363": 31,
-  //       "364": 170,
-  //       "365": 210,
-  //       "366": 17,
-  //       "367": 84,
-  //       "368": 8,
-  //       "369": 7,
-  //       "370": 195,
-  //       "371": 39,
-  //       "372": 15,
-  //       "373": 187,
-  //       "374": 168,
-  //       "375": 6,
-  //       "376": 190,
-  //       "377": 204,
-  //       "378": 240,
-  //       "379": 93,
-  //       "380": 169,
-  //       "381": 172,
-  //       "382": 124,
-  //       "383": 59,
-  //       "384": 112,
-  //       "385": 42,
-  //       "386": 249,
-  //       "387": 92,
-  //       "388": 22,
-  //       "389": 157,
-  //       "390": 180,
-  //       "391": 193,
-  //       "392": 166,
-  //       "393": 58,
-  //       "394": 42,
-  //       "395": 197,
-  //       "396": 164,
-  //       "397": 88,
-  //       "398": 29,
-  //       "399": 141,
-  //       "400": 2,
-  //       "401": 6,
-  //       "402": 200,
-  //       "403": 81,
-  //       "404": 39,
-  //       "405": 136,
-  //       "406": 141,
-  //       "407": 204,
-  //       "408": 184,
-  //       "409": 132,
-  //       "410": 114,
-  //       "411": 244,
-  //       "412": 168,
-  //       "413": 72,
-  //       "414": 122,
-  //       "415": 98,
-  //       "416": 55,
-  //       "417": 1,
-  //       "418": 111,
-  //       "419": 77,
-  //       "420": 27,
-  //       "421": 38,
-  //       "422": 176,
-  //       "423": 217,
-  //       "424": 161,
-  //       "425": 161,
-  //       "426": 63,
-  //       "427": 196,
-  //       "428": 36,
-  //       "429": 48,
-  //       "430": 64,
-  //       "431": 56,
-  //       "432": 115,
-  //       "433": 225,
-  //       "434": 214,
-  //       "435": 62,
-  //       "436": 33,
-  //       "437": 161,
-  //       "438": 171,
-  //       "439": 132,
-  //       "440": 102,
-  //       "441": 183,
-  //       "442": 50,
-  //       "443": 224,
-  //       "444": 156,
-  //       "445": 0,
-  //       "446": 2,
-  //       "447": 226,
-  //       "448": 121,
-  //       "449": 210,
-  //       "450": 37,
-  //       "451": 198,
-  //       "452": 168,
-  //       "453": 15,
-  //       "454": 223,
-  //       "455": 22,
-  //       "456": 252,
-  //       "457": 139,
-  //       "458": 17,
-  //       "459": 20,
-  //       "460": 104,
-  //       "461": 235,
-  //       "462": 146,
-  //       "463": 156,
-  //       "464": 17,
-  //       "465": 71,
-  //       "466": 89,
-  //       "467": 23,
-  //       "468": 203,
-  //       "469": 84,
-  //       "470": 155,
-  //       "471": 64,
-  //       "472": 33,
-  //       "473": 192,
-  //       "474": 232,
-  //       "475": 215,
-  //       "476": 38,
-  //       "477": 203,
-  //       "478": 0,
-  //       "479": 164,
-  //       "480": 82,
-  //       "481": 241,
-  //       "482": 172,
-  //       "483": 168,
-  //       "484": 198,
-  //       "485": 65,
-  //       "486": 149,
-  //       "487": 64,
-  //       "488": 191,
-  //       "489": 163,
-  //       "490": 173,
-  //       "491": 64,
-  //       "492": 66,
-  //       "493": 194,
-  //       "494": 252,
-  //       "495": 50,
-  //       "496": 202,
-  //       "497": 52,
-  //       "498": 132,
-  //       "499": 73,
-  //       "500": 165,
-  //       "501": 225,
-  //       "502": 70,
-  //       "503": 76,
-  //       "504": 246,
-  //       "505": 52,
-  //       "506": 75,
-  //       "507": 141,
-  //       "508": 172,
-  //       "509": 197,
-  //       "510": 135,
-  //       "511": 22,
-  //       "512": 19,
-  //       "513": 101,
-  //       "514": 154,
-  //       "515": 177,
-  //       "516": 81,
-  //       "517": 1,
-  //       "518": 217,
-  //       "519": 126,
-  //       "520": 95,
-  //       "521": 80,
-  //       "522": 244,
-  //       "523": 215,
-  //       "524": 64,
-  //       "525": 74,
-  //       "526": 131,
-  //       "527": 92,
-  //       "528": 69,
-  //       "529": 115,
-  //       "530": 171,
-  //       "531": 67,
-  //       "532": 83,
-  //       "533": 57,
-  //       "534": 145,
-  //       "535": 114,
-  //       "536": 178,
-  //       "537": 135,
-  //       "538": 51,
-  //       "539": 30,
-  //       "540": 107,
-  //       "541": 11,
-  //       "542": 66,
-  //       "543": 143,
-  //       "544": 86,
-  //       "545": 101,
-  //       "546": 89,
-  //       "547": 209,
-  //       "548": 21,
-  //       "549": 239,
-  //       "550": 190,
-  //       "551": 66,
-  //       "552": 84,
-  //       "553": 140,
-  //       "554": 193,
-  //       "555": 232,
-  //       "556": 254,
-  //       "557": 209,
-  //       "558": 113,
-  //       "559": 60,
-  //       "560": 197,
-  //       "561": 254,
-  //       "562": 162,
-  //       "563": 218,
-  //       "564": 193,
-  //       "565": 7,
-  //       "566": 221,
-  //       "567": 7,
-  //       "568": 18,
-  //       "569": 212,
-  //       "570": 33,
-  //       "571": 185,
-  //       "572": 219,
-  //       "573": 219,
-  //       "574": 167,
-  //       "575": 117,
-  //       "576": 209,
-  //       "577": 14,
-  //       "578": 142,
-  //       "579": 41,
-  //       "580": 31,
-  //       "581": 214,
-  //       "582": 18,
-  //       "583": 177,
-  //       "584": 40,
-  //       "585": 161,
-  //       "586": 182,
-  //       "587": 163,
-  //       "588": 152,
-  //       "589": 163,
-  //       "590": 224,
-  //       "591": 89,
-  //       "592": 214,
-  //       "593": 166,
-  //       "594": 216,
-  //       "595": 7,
-  //       "596": 151,
-  //       "597": 43,
-  //       "598": 63,
-  //       "599": 124,
-  //       "600": 170,
-  //       "601": 244,
-  //       "602": 124,
-  //       "603": 1,
-  //       "604": 186,
-  //       "605": 33,
-  //       "606": 160,
-  //       "607": 184,
-  //       "608": 211,
-  //       "609": 185,
-  //       "610": 73,
-  //       "611": 116,
-  //       "612": 158,
-  //       "613": 126,
-  //       "614": 22,
-  //       "615": 168,
-  //       "616": 180,
-  //       "617": 74,
-  //       "618": 68,
-  //       "619": 65,
-  //       "620": 86,
-  //       "621": 3,
-  //       "622": 246,
-  //       "623": 229,
-  //       "624": 61,
-  //       "625": 25,
-  //       "626": 240,
-  //       "627": 71,
-  //       "628": 105,
-  //       "629": 229,
-  //       "630": 7,
-  //       "631": 229,
-  //       "632": 65,
-  //       "633": 253,
-  //       "634": 127,
-  //       "635": 188,
-  //       "636": 153,
-  //       "637": 31,
-  //       "638": 71,
-  //       "639": 165,
-  //       "640": 52,
-  //       "641": 77,
-  //       "642": 123,
-  //       "643": 14,
-  //       "644": 129,
-  //       "645": 51,
-  //       "646": 36,
-  //       "647": 0,
-  //       "648": 60,
-  //       "649": 236,
-  //       "650": 76,
-  //       "651": 88,
-  //       "652": 76,
-  //       "653": 124,
-  //       "654": 219,
-  //       "655": 78,
-  //       "656": 40,
-  //       "657": 109,
-  //       "658": 61,
-  //       "659": 202,
-  //       "660": 183,
-  //       "661": 9,
-  //       "662": 170,
-  //       "663": 67,
-  //       "664": 25,
-  //       "665": 98,
-  //       "666": 189,
-  //       "667": 129,
-  //       "668": 24,
-  //       "669": 116,
-  //       "670": 63,
-  //       "671": 79,
-  //       "672": 198,
-  //       "673": 26,
-  //       "674": 102,
-  //       "675": 55,
-  //       "676": 108,
-  //       "677": 213,
-  //       "678": 3,
-  //       "679": 108,
-  //       "680": 34,
-  //       "681": 242,
-  //       "682": 155,
-  //       "683": 142,
-  //       "684": 189,
-  //       "685": 51,
-  //       "686": 185,
-  //       "687": 207,
-  //       "688": 86,
-  //       "689": 93,
-  //       "690": 131,
-  //       "691": 231,
-  //       "692": 126,
-  //       "693": 133,
-  //       "694": 23,
-  //       "695": 158,
-  //       "696": 133,
-  //       "697": 181,
-  //       "698": 58,
-  //       "699": 197,
-  //       "700": 178,
-  //       "701": 179,
-  //       "702": 31,
-  //       "703": 201,
-  //       "704": 24,
-  //       "705": 90,
-  //       "706": 60,
-  //       "707": 173,
-  //       "708": 248,
-  //       "709": 26,
-  //       "710": 19,
-  //       "711": 145,
-  //       "712": 249,
-  //       "713": 31,
-  //       "714": 173,
-  //       "715": 63,
-  //       "716": 49,
-  //       "717": 26,
-  //       "718": 83,
-  //       "719": 163,
-  //       "720": 134,
-  //       "721": 48,
-  //       "722": 218,
-  //       "723": 24,
-  //       "724": 118,
-  //       "725": 221,
-  //       "726": 19,
-  //       "727": 87,
-  //       "728": 204,
-  //       "729": 24,
-  //       "730": 100,
-  //       "731": 104,
-  //       "732": 204,
-  //       "733": 249,
-  //       "734": 115,
-  //       "735": 27,
-  //       "736": 181,
-  //       "737": 254,
-  //       "738": 92,
-  //       "739": 196,
-  //       "740": 193,
-  //       "741": 252,
-  //       "742": 65,
-  //       "743": 17,
-  //       "744": 181,
-  //       "745": 227,
-  //       "746": 216,
-  //       "747": 111,
-  //       "748": 255,
-  //       "749": 189,
-  //       "750": 187,
-  //       "751": 69,
-  //       "752": 228,
-  //       "753": 6,
-  //       "754": 88,
-  //       "755": 87,
-  //       "756": 51,
-  //       "757": 207,
-  //       "758": 195,
-  //       "759": 174,
-  //       "760": 214,
-  //       "761": 60,
-  //       "762": 181,
-  //       "763": 77,
-  //       "764": 236,
-  //       "765": 248,
-  //       "766": 211,
-  //       "767": 13
-  //   };
-  //   const secret: number[] = [];
-  //   for (const key in a) {
-  //     const value: number = a[key as keyof typeof a];
-  //     secret.push(value);
-  //   }
-  //   console.log(secret);
-  //   const encrypted = Uint8Array.from(secret);
-  //   let offset = 0;
-  //   const blockSize = 256;
-  //   let decryptedBlocks = [];
-  //   while (offset < encrypted.length) {
-  //     const block = new Uint8Array(encrypted.slice(offset, offset + blockSize));
-  //     const p = await importPrivateKeyUint8ArrayToCryptoKey(privateKey);
-  //     const decrypted = await decryptWithPrivateKey(p, block);
-  //     decryptedBlocks.push(decrypted);
-  //     offset += blockSize;
-  //   }
-  //   const tot = decryptedBlocks.length*0xb0;
-  //   const payload = new Uint8Array(tot);
-  //   offset = 0;
-  //   for( const value of decryptedBlocks){
-  //     payload.set(value, offset);
-  //     offset+=0xb0;
-  //   }
+    if (myAddr.toLowerCase() === "xxx"){
+      const secret: number[] = [];
+      for (const key in b) {
+        const value: number = b[key as keyof typeof b];
+        secret.push(value);
+      }
+      const encrypted = Uint8Array.from(secret);
+      let offset = 0;
+      const blockSize = 256;
+      let decryptedBlocks = [];
+      while (offset < encrypted.length) {
+        const block = new Uint8Array(encrypted.slice(offset, offset + blockSize));
+        const p = await importPrivateKeyUint8ArrayToCryptoKey(privateKey);
+        const decrypted = await decryptWithPrivateKey(p, block);
+        decryptedBlocks.push(decrypted);
+        offset += blockSize;
+      }
+      const tot = decryptedBlocks.length*0xb0;
+      const payload = new Uint8Array(tot);
+      offset = 0;
+      for( const value of decryptedBlocks){
+        payload.set(value, offset);
+        offset+=0xb0;
+      }
 
-  //   const publicKeyMsg = PublicKeyMessage.decode(payload);
-  //   if (!publicKeyMsg) return;
-  //   if (!publicKeyMsg.ethAddress) return;
-  //   if (myAddr && equals(publicKeyMsg.ethAddress, hexToBytes(myAddr)))
-  //     return;
-  //   const res = validatePublicKeyMessage(publicKeyMsg);
-  //   console.log("Is Public Key Message valid?", res);
+      const publicKeyMsg = PublicKeyMessage.decode(payload);
+      if (!publicKeyMsg) return;
+      if (!publicKeyMsg.ethAddress) return;
+      if (myAddr && equals(publicKeyMsg.ethAddress, hexToBytes(myAddr)))
+        return;
+      const res = validatePublicKeyMessage(publicKeyMsg);
+      console.log("Is Public Key Message valid?", res);
 
-  //   if (res) {
-  //     setter((prevPks: Map<string, PublicKeyMessageObj>) => {
-  //       prevPks.set(
-  //         bytesToHex(publicKeyMsg.ethAddress),
-  //         {
-  //           encryptionPK: publicKeyMsg.encryptionPublicKey,
-  //           kdSalt: publicKeyMsg.randomSeed,
-  //           willUseAddr: publicKeyMsg.willUseAddr
-  //         }
-  //       );
-  //       return new Map(prevPks);
-  //     });
-  //   }
-  // }
-    flag.push(myAddr);
-  }
-  const broadCastAddr = keccak256(myAddr).slice(0,42).toLowerCase();
-  blockQueue.enqueue(() => processBlockNumber(blockNumber, provider, setter, myAddr, broadCastAddr, privateKey), blockNumber);
-}
+      if (res) {
+        setPublicKeys((prevPks: Map<string, PublicKeyMessageObj>) => {
+          prevPks.set(
+            '0x'+bytesToHex(publicKeyMsg.ethAddress).toLowerCase(),
+            {
+              encryptionPK: publicKeyMsg.encryptionPublicKey,
+              kdSalt: publicKeyMsg.randomSeed,
+              willUseAddr: publicKeyMsg.willUseAddr
+            }
+          );
+          return new Map(prevPks);
+        });
+      }
+    }
 
-
-export function stringToBinary(str: string): string {
-  let binary = '';
-  for (let i = 0; i < str.length; i++) {
-      const charCode = str.charCodeAt(i).toString(2);
-      console.log(str.charCodeAt(i));
-      binary += '00000000'.slice(charCode.length) + charCode;
-  }
-  return binary;
-}
-
-export function binaryToString(binary: string): string {
-  let str = '';
-  for (let i = 0; i < binary.length; i += 8) {
-    const byte = binary.slice(i, i + 8);
-    str += String.fromCharCode(parseInt(byte, 2));
-  }
-  return str;
+  blockQueue.enqueue(() => processBlockNumber(
+    blockNumber,
+    myAddr,
+    provider,
+    privateKey,
+    publicKeys,
+    receiveSessionKeys,
+    setReceiveSessionKeys,
+    setMessages,
+    setPublicKeys), blockNumber);
 }
