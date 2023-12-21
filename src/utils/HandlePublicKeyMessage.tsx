@@ -193,6 +193,10 @@ async function handleEncryptedMsg(payload: Uint8Array,
     const decoder = new TextDecoder();
     const key = await importAESKeyUint8ArrayToCryptoKey(sessionKey);
     const iv = hexToBytes(myAddr.slice(-33, -1));
+
+    /**
+     * uncomment if using rsa
+     */       
     const aesDecrypted = await decryptCBC(key, iv, decryptedArray);
 
     /**

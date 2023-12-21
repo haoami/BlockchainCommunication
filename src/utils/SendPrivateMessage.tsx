@@ -172,6 +172,7 @@ export default function SendPrivateMessage({ recipients, provider, walletsToSend
       /**
        * rsa encrypt
        * but very slow
+       * comment if for test to be faster
        */
       const publicKey = await importPublicKeyUint8ArrayToCryptoKey(recipientPKMobj.encryptionPK);
       const blockSize = 0xb0;
@@ -194,7 +195,7 @@ export default function SendPrivateMessage({ recipients, provider, walletsToSend
       console.log("concated blocks: ", payload);
 
       /**
-       * for test, without rsa could be faster
+       * uncomment if for test, without rsa could be faster
        */
       // const payload = aesEncrypted;
 
