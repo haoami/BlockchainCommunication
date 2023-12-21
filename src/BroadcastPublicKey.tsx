@@ -1,37 +1,56 @@
-import { Button, TextField } from "@material-ui/core";
-import React, { useState, ChangeEvent } from "react";
+import { Button, TextField, createMuiTheme, makeStyles } from "@material-ui/core";
+import React, { useState, ChangeEvent, Dispatch, SetStateAction } from "react";
 import {
   createPublicKeyMessage,
-  genRandomBytes,
+  encryptCBC,
+  importAESKeyUint8ArrayToCryptoKey,
   KeyPair,
-  PublicKeyMessageEncryptionKey,
+  sendMultiTransactions,
 } from "./wakuCrypto";
 import { PublicKeyMessage } from "./messaging/wire";
-import type { RelayNode } from "@waku/interfaces";
-import { createEncoder } from "@waku/message-encryption/symmetric";
-import type { TypedDataSigner } from "@ethersproject/abstract-signer";
 import { Wallet, ethers } from "ethers"
 import { isAddress } from "ethers/lib/utils";
 import { Web3Provider } from "@ethersproject/providers";
-import { stringToBinary } from "./utils/GetBlockInfo"
-import { bytesToHex, hexToBytes } from "@waku/utils/bytes";
 import { keccak256 } from "ethers/lib/utils";
+import { hexToBytes } from "@waku/utils/bytes";
+import { purple, teal } from "@material-ui/core/colors";
 
 interface Props {
   encryptionKeyPair: KeyPair | undefined;
-  waku: RelayNode | undefined;
   address: string | undefined;
   provider: Web3Provider | undefined;
+  setter: Dispatch<SetStateAction<Map<string, Wallet>>>;
 }
 
-// var cnt = 0;
+const theme = createMuiTheme({
+  palette: {
+    primary: {
+      main: purple[500],
+    },
+    secondary: {
+      main: teal[600],
+    },
+  },
+});
+
+const useStyles = makeStyles({
+  textfield: {
+    height: '50px',
+    marginLeft: '90px',
+  },
+  button: {
+    margin: theme.spacing(1),
+    marginLeft: '10px',
+  },
+});
 
 export default function BroadcastPublicKey({
   encryptionKeyPair,
-  waku,
   address,
   provider,
+  setter,
 }: Props) {
+  const classes = useStyles();
   const [publicKeyMsg, setPublicKeyMsg] = useState<PublicKeyMessage>();
   const [targetAddr, setTargetAddr] = useState<string>();
 
@@ -43,12 +62,12 @@ export default function BroadcastPublicKey({
     
     if (!encryptionKeyPair) return;
     if (!address) return;
-    if (!waku) return;
     if (!provider) return;
     if (!targetAddr) return;
     if (!isAddress(targetAddr)) return;
-    const transactions: { to: string; value: ethers.BigNumber; data: Uint8Array}[] = [];      
-    function addTransaction(to: string, value: number, bit: number, flag: number=-1) {
+    
+    const transactions: Map<number, { to: string; value: ethers.BigNumber; data: Uint8Array}> = new Map();
+    function addTransaction(idx: number, to: string, value: number, bit: number, flag: number=-1) {
       // flag: 0=>start=> 00; 1=>end=>11; else _
       const inputdata = "0x2199d5cd000000000000000000000000686d1d8070f7aa213c7b12c40b8a86fc72d56c9";
       var data;
@@ -62,16 +81,22 @@ export default function BroadcastPublicKey({
         data = inputdata+(bit|8);
         // cnt+=1;
       }
-      console.log(data);
-      transactions.push({
+      transactions.set(idx, {
         to: to,
         value: ethers.utils.parseEther(value.toString()),
-        data: hexToBytes(data)
+        data: hexToBytes(data),
       });
     }
-    try{
 
+    try{
       const willUseWallet = ethers.Wallet.createRandom().connect(provider);
+      setter((prevWalletToSend: Map<string, Wallet>) => {
+        prevWalletToSend.set(
+          targetAddr.toLowerCase(),
+          willUseWallet
+        );
+        return new Map(prevWalletToSend);
+      });
       const signer = provider.getSigner();
       const _publicKeyMessage = await (async () => {
         if (!publicKeyMsg) {
@@ -88,10 +113,11 @@ export default function BroadcastPublicKey({
         }
       return publicKeyMsg;
       })();
-      const payload = _publicKeyMessage.encode(); // protobuf encode
-      // const payload = new Uint8Array([0x41, 0x42, 0x43, 0x44]);
+      const encoded = _publicKeyMessage.encode(); // protobuf encode
+      const key = await importAESKeyUint8ArrayToCryptoKey(hexToBytes(targetAddr.slice(2, 34)));
+      const iv = hexToBytes(targetAddr.slice(-33, -1));
+      const payload = await encryptCBC(key, iv, encoded);
       console.log(payload);
-      console.log(bytesToHex(payload));
 
       if(!willUseWallet) return;
       const toTmpWallet = {
@@ -109,46 +135,18 @@ export default function BroadcastPublicKey({
       }
 
       const realTargetAddr = keccak256(targetAddr).slice(0, 42);
-      addTransaction(realTargetAddr, 0, 0, 0);
+      addTransaction(0, realTargetAddr, 0, 0, 0);
       for(let i = 0; i < payload.length; i++){
         var bytes = payload[i];
         for(let j = 0; j < 8; j++){
           const bit = bytes&0b1;
-          addTransaction(realTargetAddr, 0, bit);
+          addTransaction(i*8+j+1, realTargetAddr, 0, bit);
           bytes=(bytes>>1);
         }
       }
-      addTransaction(realTargetAddr, 0, 0, 1);
+      addTransaction(transactions.size, realTargetAddr, 0, 0, 1);
 
-      const originalNonce = await provider.getTransactionCount(willUseWallet.address);
-      const gasPrice = await provider.getGasPrice();
-      const tx = await willUseWallet.sendTransaction({
-          ...transactions[0],
-          nonce: originalNonce,
-          gasPrice: gasPrice,
-        });
-      console.log(tx);
-      const res = await tx.wait();
-      console.log("transaction[0]: ", res);
-      for (let i = 1; i < transactions.length-1; i++) {
-        const currentNonce = originalNonce+i;
-        const tx = await willUseWallet.sendTransaction({
-          ...transactions[i],
-          nonce: currentNonce,
-          gasPrice: gasPrice,
-        });
-        console.log(tx);
-        if (i === transactions.length-2){
-            const res = await tx.wait();
-            console.log("transaction[-2]: ", res);
-            const lastTx = await willUseWallet.sendTransaction({
-              ...transactions[i+1],
-              nonce: currentNonce+1,
-              gasPrice: gasPrice,
-            });
-            console.log(lastTx);
-        }
-      }
+      sendMultiTransactions(provider, willUseWallet, transactions);
     }
     catch{
       console.log("something err");
@@ -162,19 +160,20 @@ export default function BroadcastPublicKey({
       justifyContent: "center",
       flexWrap: "wrap",
       }}>
-      <TextField
+      <TextField className={classes.textfield}
           id="address-input"
           label="TARGET ADDR"
           variant="filled"
           onChange={handleMessageChange}
           value={targetAddr}
-          disabled={!encryptionKeyPair || !waku || !address || !provider}
+          disabled={!encryptionKeyPair || !address || !provider}
         />
       <Button
         variant="contained"
         color="primary"
         onClick={broadcastPublicKey}
-        disabled={!encryptionKeyPair || !waku || !address || !provider || !targetAddr}
+        className={classes.button}
+        disabled={!encryptionKeyPair || !address || !provider || !targetAddr}
       >
         Broadcast Encryption Public Key
       </Button>

@@ -2,13 +2,10 @@ import "@ethersproject/shims";
 
 import React, { useEffect, useState } from "react";
 import "./App.css";
-import type { RelayNode, IDecoder } from "@waku/interfaces";
-import { createDecoder as createSymmetricDecoder } from "@waku/message-encryption/symmetric";
-import { createDecoder, DecodedMessage } from "@waku/message-encryption/ecies";
-import { KeyPair, PublicKeyMessageEncryptionKey } from "./wakuCrypto";
-import { Message } from "./messaging/Messages";
+import { KeyPair } from "./wakuCrypto";
+import Messages, { Message } from "./messaging/Messages";
 import "fontsource-roboto";
-import { AppBar, IconButton, Toolbar, Typography } from "@material-ui/core";
+import { AppBar, Button, IconButton, Toolbar, Typography } from "@material-ui/core";
 import KeyPairHandling from "./key_pair_handling/KeyPairHandling";
 import {
   createMuiTheme,
@@ -18,19 +15,13 @@ import {
 import { teal, purple, green } from "@material-ui/core/colors";
 import WifiIcon from "@material-ui/icons/Wifi";
 import BroadcastPublicKey from "./BroadcastPublicKey";
-import Messaging from "./messaging/Messaging";
-import {
-  PrivateMessageContentTopic,
-  handlePrivateMessage,
-  handlePublicKeyMessage,
-  initWaku,
-  PublicKeyContentTopic,
-} from "./waku";
+import Connecting from "./messaging/Connecting";
 import { Web3Provider } from "@ethersproject/providers/src.ts/web3-provider";
 import ConnectWallet from "./ConnectWallet";
-import {PublicKeyMessageObj} from "./waku";
-import Transfer from "./utils/Transfer";
-import { processBlock } from "./utils/GetBlockInfo"
+import {PublicKeyMessageObj} from "./wakuCrypto";
+import SendPrivateMessage from "./utils/SendPrivateMessage";
+import { handlePublicKeyorPrivateMessage } from "./utils/HandlePublicKeyMessage"
+import { Wallet } from "ethers";
 
 
 const theme = createMuiTheme({
@@ -69,134 +60,67 @@ const useStyles = makeStyles({
     flexGrow: 1,
   },
   peers: {},
+  buttonleft: {
+    marginRight: theme.spacing(2),
+  },
+  buttonright: {
+    marginLeft: theme.spacing(2),
+  },
 });
 
 function App() {
-  const [waku, setWaku] = useState<RelayNode>();
   const [provider, setProvider] = useState<Web3Provider>();
   const [encryptionKeyPair, setEncryptionKeyPair] = useState<
     KeyPair | undefined
   >();
-  const [privateMessageDecoder, setPrivateMessageDecoder] =
-    useState<IDecoder<DecodedMessage>>();
   const [publicKeys, setPublicKeys] = useState<Map<string, PublicKeyMessageObj>>(
+    new Map()
+  );
+  const [sendSessionKeys, setSendSessionKeys] = useState<Map<string, Uint8Array>>(
+    new Map()
+  );
+  const [receiveSessionKeys, setReceiveSessionKeys] = useState<Map<string, Uint8Array>>(
+    new Map()
+  );
+  const [walletsToSend, setWalletsToSend] = useState<Map<string, Wallet>>(
     new Map()
   );
   const [messages, setMessages] = useState<Message[]>([]);
   const [address, setAddress] = useState<string>();
-  const [broadCastAddress, setbroadCastAddress] = useState<string>();
-  const [peerStats, setPeerStats] = useState<{
-    relayPeers: number;
-  }>({
-    relayPeers: 0,
-  });
 
   const classes = useStyles();
-
-  // Waku initialization
-  useEffect(() => {
-    (async () => {
-      if (waku) return;
-
-      const _waku = await initWaku();
-      console.log("waku: ready");
-      setWaku(_waku);
-    })().catch((e) => {
-      console.error("Failed to initiate Waku", e);
-    });
-  }, [waku]);
-
-  useEffect(() => {
-    if (!waku) return;
-
-    const observerPublicKeyMessage = handlePublicKeyMessage.bind(
-      {},
-      address,
-      setPublicKeys
-    );
-
-    const publicKeyMessageDecoder = createSymmetricDecoder(
-      PublicKeyContentTopic,
-      PublicKeyMessageEncryptionKey
-    );
-
-    let unsubscribe: undefined | (() => Promise<void>);
-
-    waku.relay.subscribe(publicKeyMessageDecoder, observerPublicKeyMessage);
-
-    return function cleanUp() {
-      if (typeof unsubscribe === "undefined") return;
-
-      unsubscribe().then(
-        () => {
-          console.log("unsubscribed to ", PublicKeyContentTopic);
-        },
-        (e) => console.error("Failed to unsubscribe", e)
-      );
-    };
-  }, [waku, address]);
-
-  useEffect(() => {
-    if (!encryptionKeyPair) return;
-
-    setPrivateMessageDecoder(
-      createDecoder(PrivateMessageContentTopic, encryptionKeyPair.privateKey)
-    );
-  }, [encryptionKeyPair]);
-
-  useEffect(() => {
-    if (!waku) return;
-    if (!privateMessageDecoder) return;
-    if (!address) return;
-
-    const observerPrivateMessage = handlePrivateMessage.bind(
-      {},
-      setPublicKeys,
-      setMessages,
-      address
-    );
-
-    let unsubscribe: undefined | (() => Promise<void>);
-
-    waku.relay.subscribe(privateMessageDecoder, observerPrivateMessage);
-
-    return function cleanUp() {
-      if (typeof unsubscribe === "undefined") return;
-      unsubscribe().catch((e) => console.error("Failed to unsubscribe", e));
-    };
-  }, [waku, address, privateMessageDecoder]);
-
-  useEffect(() => {
-    if (!waku) return;
-
-    const interval = setInterval(async () => {
-      const peers = waku.relay.gossipSub.getPeers();
-
-      setPeerStats({
-        relayPeers: peers.length,
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [waku]);
-
-  useEffect(() => {
-    if (!provider) return;
-    if (!address) return;
-    if (!broadCastAddress) return;
-    provider.on('block', processBlock.bind(
-      {},
-      address,
-      broadCastAddress,
-      provider,
-      setPublicKeys)
-    );
-  }, [provider])
 
   let addressDisplay = "";
   if (address) {
     addressDisplay =
       address;
       // address.substr(0, 6) + "..." + address.substr(address.length - 4, 4);
+  }
+
+  const handleBlockEvent = (blockNumber: number | undefined) => {
+    if (!provider || !address || !encryptionKeyPair) return;
+    handlePublicKeyorPrivateMessage(
+      address,
+      provider,
+      encryptionKeyPair.privateKey,
+      publicKeys,
+      receiveSessionKeys,
+      setReceiveSessionKeys,
+      setMessages,
+      setPublicKeys,
+      blockNumber
+    );
+  };
+
+  const startListen = async () => {
+    if (!provider) return;
+    provider.on('block', handleBlockEvent);
+    console.log("start listen");
+  }
+  const stopListen = async () => {
+    if (!provider) return;
+    provider.removeAllListeners('block');
+    console.log("stop listen");
   }
 
   return (
@@ -210,13 +134,10 @@ function App() {
               aria-label="waku-status"
             >
               <WifiIcon
-                color={waku ? undefined : "disabled"}
-                style={waku ? { color: green[500] } : {}}
+                color={provider ? undefined : "disabled"}
+                style={provider ? { color: green[500] } : {}}
               />
             </IconButton>
-            <Typography className={classes.peers} aria-label="connected-peers">
-              (Relay) Peers: {peerStats.relayPeers}
-            </Typography>
             <Typography variant="h6" className={classes.title}>
             Blockchain covert communication(by kk/ay/f0)
             </Typography>
@@ -228,42 +149,65 @@ function App() {
           <main className={classes.main}>
             <fieldset>
               <legend>Wallet</legend>
+              <Button
+                variant="contained"
+                color="primary"
+                className={classes.buttonleft}
+                onClick={startListen}
+                disabled={!provider}
+                >
+                START LISTEN
+              </Button>
               <ConnectWallet
                 setAddress={setAddress}
                 setProvider={setProvider}
-                setbroadCastAddress={setbroadCastAddress}
               />
+              <Button
+                variant="contained"
+                color="primary"
+                className={classes.buttonright}
+                onClick={stopListen}
+                disabled={!provider}
+                >
+                STOP LISTEN
+              </Button>
             </fieldset>
             <fieldset>
               <legend>Encryption Key Pair</legend>
               <KeyPairHandling
                 encryptionKeyPair={encryptionKeyPair}
                 setEncryptionKeyPair={setEncryptionKeyPair}
+                provider={provider}
               />
               <BroadcastPublicKey
                 address={address}
                 encryptionKeyPair={encryptionKeyPair}
-                waku={waku}
                 provider={provider}
+                setter={setWalletsToSend}
               />
             </fieldset>
             <fieldset>
-              <legend>Messaging</legend>
-              <Messaging
+              <legend>Connecting</legend>
+              <Connecting
                 recipients={publicKeys}
-                waku={waku}
                 messages={messages}
                 publicKey={encryptionKeyPair?.publicKey}
                 address={address}
                 provider={provider}
+                setter={setPublicKeys}
+                setWalletsToSend={setWalletsToSend}
               />
             </fieldset>
             <fieldset>
-              <legend>TestTransfer</legend>
-              <Transfer
+              <legend>Messaging</legend>
+              <SendPrivateMessage
                 recipients={publicKeys}
                 provider={provider}
+                walletsToSend={walletsToSend}
+                sessionKeys={sendSessionKeys}
+                setter={setSendSessionKeys}
               />
+              <Messages messages={messages} />
             </fieldset>
           </main>
         </div>
