@@ -156,23 +156,23 @@ async function handleEncryptedMsg(payload: Uint8Array,
   setReceiveSessionKeys: Dispatch<SetStateAction<Map<string, Uint8Array>>>): Promise<string>{
     console.log("start handleEncryptedMsg");
 
-    let offset = 0;
-    const blockSize = 256;
-    let decryptedBlocks = [];
-    while (offset < payload.length) {
-      const block = new Uint8Array(payload.slice(offset, offset + blockSize));
-      const p = await importPrivateKeyUint8ArrayToCryptoKey(privateKey);
-      const decrypted = await decryptWithPrivateKey(p, block);
-      decryptedBlocks.push(decrypted);
-      offset += blockSize;
-    }
-    const tot = decryptedBlocks.length*0xb0;
-    const decryptedArray = new Uint8Array(tot);
-    offset = 0;
-    for( const value of decryptedBlocks){
-      decryptedArray.set(value, offset);
-      offset+=0xb0;
-    }
+    // let offset = 0;
+    // const blockSize = 256;
+    // let decryptedBlocks = [];
+    // while (offset < payload.length) {
+    //   const block = new Uint8Array(payload.slice(offset, offset + blockSize));
+    //   const p = await importPrivateKeyUint8ArrayToCryptoKey(privateKey);
+    //   const decrypted = await decryptWithPrivateKey(p, block);
+    //   decryptedBlocks.push(decrypted);
+    //   offset += blockSize;
+    // }
+    // const tot = decryptedBlocks.length*0xb0;
+    // const decryptedArray = new Uint8Array(tot);
+    // offset = 0;
+    // for( const value of decryptedBlocks){
+    //   decryptedArray.set(value, offset);
+    //   offset+=0xb0;
+    // }
 
     var sessionKey: Uint8Array;
     if (receiveSessionKeys.has(realFromAddr)){
@@ -193,12 +193,16 @@ async function handleEncryptedMsg(payload: Uint8Array,
     const decoder = new TextDecoder();
     const key = await importAESKeyUint8ArrayToCryptoKey(sessionKey);
     const iv = hexToBytes(myAddr.slice(-33, -1));
-    const aesDecrypted = await decryptCBC(key, iv, decryptedArray);
+
+    /**
+     * uncomment if using rsa
+     */       
+    // const aesDecrypted = await decryptCBC(key, iv, decryptedArray);
 
     /**
      * uncomment if for test, without rsa could be faster
      */       
-    // const aesDecrypted = await decryptCBC(key, iv, payload);
+    const aesDecrypted = await decryptCBC(key, iv, payload);
 
 
     console.log("aesDecrypted: ", aesDecrypted);
