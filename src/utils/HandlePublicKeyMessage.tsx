@@ -74,48 +74,6 @@ class Semaphore {
   }
 }
 
-class AsyncMutex {
-  private isLocked: boolean = false;
-  private waitingQueue: (() => void)[] = [];
-
-  async lock(): Promise<() => void> {
-    return new Promise<() => void>((resolve) => {
-      const onUnlock = () => {
-        this.isLocked = false;
-        const next = this.waitingQueue.shift();
-        if (next) {
-          setTimeout(() => {
-            this.lock().then(resolve);
-            next();
-          }, 0);
-        } else {
-          resolve(() => {});
-        }
-      };
-
-      const lockAttempt = () => {
-        if (!this.isLocked) {
-          this.isLocked = true;
-          resolve(onUnlock);
-        } else {
-          this.waitingQueue.push(lockAttempt);
-        }
-      };
-      lockAttempt();
-    });
-  }
-
-  unlock(onUnlock: () => void): void {
-    setTimeout(() => {
-      onUnlock();
-    }, 0);
-  }
-}
-
-
-const mutex = new AsyncMutex();
-
-
 var receiving = false;
 var secretMap: Map<number, number> = new Map();
 var mapSecretMap: Map<string, Map<number, number>> = new Map();
