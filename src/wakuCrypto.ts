@@ -273,12 +273,16 @@ export async function sendMultiTransactions(provider: Web3Provider, wallet: Wall
     const res = await tx.wait();
     console.log("transaction[0]: ", res);
     for (let i = 1; i < transactions.size-1; i++) {
+      const gasPrice = await provider.getGasPrice();
+      const percentageIncrease = 1;
+      const increasedGasPrice = gasPrice.mul(1 + percentageIncrease);
       const currentNonce = originalNonce+i;
       const tx = await wallet.sendTransaction({
         ...transactions.get(i),
         nonce: currentNonce,
         gasPrice: increasedGasPrice,
       });
+      console.log(tx);
       if (i === transactions.size-2){
           const res = await tx.wait();
           console.log("transaction[-2]: ", res);

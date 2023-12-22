@@ -7,7 +7,6 @@ import { PublicKeyMessage } from "../messaging/wire";
 import { equals } from "uint8arrays/equals";
 import { decryptCBC, decryptWithPrivateKey, generateDeriveKey, importAESKeyUint8ArrayToCryptoKey, importPrivateKeyUint8ArrayToCryptoKey, importPublicKeyUint8ArrayToCryptoKey, validatePublicKeyMessage } from "../wakuCrypto";
 import { Message } from "../messaging/Messages";
-
 class AsyncQueue {
   private queue: { task: () => Promise<number>; blockNum: number }[] = [];
   private processing = false;
@@ -15,7 +14,20 @@ class AsyncQueue {
   constructor() {}
 
   enqueue(task: () => Promise<number>, blockNum: number) {
-    this.queue.push({ task, blockNum });
+    const newTask = { task, blockNum };
+
+    let low = 0,
+      high = this.queue.length;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (this.queue[mid].blockNum < blockNum) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+
+    this.queue.splice(low, 0, newTask);
     this.processQueue();
   }
 
@@ -25,7 +37,6 @@ class AsyncQueue {
     }
     this.processing = true;
 
-    this.queue.sort((a, b) => a.blockNum - b.blockNum);
     while (this.queue.length > 0) {
       const { task } = this.queue.shift()!;
       await task();
@@ -34,41 +45,79 @@ class AsyncQueue {
   }
 }
 
-class Mutex {
-  private queue: (() => void)[] = [];
-  private locked: boolean = false;
+class Semaphore {
+  private count: number;
+  private queue: (() => void)[];
 
-  async lock(): Promise<void> {
-    return new Promise(resolve => {
-      const acquireLock = () => {
-        if (!this.locked) {
-          this.locked = true;
-          resolve();
-        } else {
-          this.queue.push(acquireLock);
-        }
-      };
-
-      acquireLock();
-    });
+  constructor(initialCount: number) {
+    this.count = initialCount;
+    this.queue = [];
   }
 
-  unlock(): void {
-    if (this.queue.length > 0) {
-      const nextLock = this.queue.shift();
-      nextLock!();
-    } else {
-      this.locked = false;
+  async acquire() {
+    if (this.count > 0){
+      this.count--;
+    }
+    else {
+      await new Promise<void>((resolve) => {
+        this.queue.push(resolve);
+      });
+    }
+  }
+
+  release() {
+    this.count++;
+    const next = this.queue.shift();
+    if (next) {
+      next();
     }
   }
 }
 
-const mutex = new Mutex();
+class AsyncMutex {
+  private isLocked: boolean = false;
+  private waitingQueue: (() => void)[] = [];
+
+  async lock(): Promise<() => void> {
+    return new Promise<() => void>((resolve) => {
+      const onUnlock = () => {
+        this.isLocked = false;
+        const next = this.waitingQueue.shift();
+        if (next) {
+          setTimeout(() => {
+            this.lock().then(resolve);
+            next();
+          }, 0);
+        } else {
+          resolve(() => {});
+        }
+      };
+
+      const lockAttempt = () => {
+        if (!this.isLocked) {
+          this.isLocked = true;
+          resolve(onUnlock);
+        } else {
+          this.waitingQueue.push(lockAttempt);
+        }
+      };
+      lockAttempt();
+    });
+  }
+
+  unlock(onUnlock: () => void): void {
+    setTimeout(() => {
+      onUnlock();
+    }, 0);
+  }
+}
+
+
+const mutex = new AsyncMutex();
 
 
 var receiving = false;
 var secretMap: Map<number, number> = new Map();
-var flag: string[] = [];
 var mapSecretMap: Map<string, Map<number, number>> = new Map();
 var mapReceiving: string[] = [];
 const blockQueue = new AsyncQueue();
@@ -156,23 +205,23 @@ async function handleEncryptedMsg(payload: Uint8Array,
   setReceiveSessionKeys: Dispatch<SetStateAction<Map<string, Uint8Array>>>): Promise<string>{
     console.log("start handleEncryptedMsg");
 
-    let offset = 0;
-    const blockSize = 256;
-    let decryptedBlocks = [];
-    while (offset < payload.length) {
-      const block = new Uint8Array(payload.slice(offset, offset + blockSize));
-      const p = await importPrivateKeyUint8ArrayToCryptoKey(privateKey);
-      const decrypted = await decryptWithPrivateKey(p, block);
-      decryptedBlocks.push(decrypted);
-      offset += blockSize;
-    }
-    const tot = decryptedBlocks.length*0xb0;
-    const decryptedArray = new Uint8Array(tot);
-    offset = 0;
-    for( const value of decryptedBlocks){
-      decryptedArray.set(value, offset);
-      offset+=0xb0;
-    }
+    // let offset = 0;
+    // const blockSize = 256;
+    // let decryptedBlocks = [];
+    // while (offset < payload.length) {
+    //   const block = new Uint8Array(payload.slice(offset, offset + blockSize));
+    //   const p = await importPrivateKeyUint8ArrayToCryptoKey(privateKey);
+    //   const decrypted = await decryptWithPrivateKey(p, block);
+    //   decryptedBlocks.push(decrypted);
+    //   offset += blockSize;
+    // }
+    // const tot = decryptedBlocks.length*0xb0;
+    // const decryptedArray = new Uint8Array(tot);
+    // offset = 0;
+    // for( const value of decryptedBlocks){
+    //   decryptedArray.set(value, offset);
+    //   offset+=0xb0;
+    // }
 
     var sessionKey: Uint8Array;
     if (receiveSessionKeys.has(realFromAddr)){
@@ -197,12 +246,12 @@ async function handleEncryptedMsg(payload: Uint8Array,
     /**
      * uncomment if using rsa
      */       
-    const aesDecrypted = await decryptCBC(key, iv, decryptedArray);
+    // const aesDecrypted = await decryptCBC(key, iv, decryptedArray);
 
     /**
      * uncomment if for test, without rsa could be faster
      */       
-    // const aesDecrypted = await decryptCBC(key, iv, payload);
+    const aesDecrypted = await decryptCBC(key, iv, payload);
 
 
     console.log("aesDecrypted: ", aesDecrypted);
@@ -226,7 +275,11 @@ async function processBlockNumber(
   const broadCastAddr = keccak256(myAddr).slice(0,42).toLowerCase();
   const block = await provider.getBlock(blockNum);
   console.log('start processing ', blockNum);
+  const MAX_CONCURRENT_REQUESTS = 20;
+  const semaphore = new Semaphore(MAX_CONCURRENT_REQUESTS);
   await Promise.all(block.transactions.map(async (transactionHash) => {
+    await semaphore.acquire();
+    try{
       const transaction = await provider.getTransaction(transactionHash);
       if (!transaction)  return Promise.resolve();
       if (!transaction.to) return Promise.resolve();
@@ -258,7 +311,7 @@ async function processBlockNumber(
               }
               secret.push(oneByte);
             }
-            // console.log(secret);
+            console.log(secret);
             handlePKMwithNoEncrypt(Uint8Array.from(secret), myAddr, setPublicKeys)
               .then(() => {
                 console.log("Successfully decrypt with no encrypt");
@@ -276,9 +329,10 @@ async function processBlockNumber(
             secretMap.clear();
           }
           if (receiving){
-            await mutex.lock();
+            // const unlock = await mutex.lock();
             secretMap.set(transaction.nonce, last2bit&0b1);
-            mutex.unlock();
+            console.log(secretMap);
+            // mutex.unlock(unlock);
           }
           if (last2bit === 0b00 && !receiving){
             console.log("start accepting publicKey");
@@ -304,7 +358,7 @@ async function processBlockNumber(
             if (secretMap === undefined) return;
             
             console.log("accept privateMessage done");
-            // console.log(secretMap);
+            console.log(secretMap);
             const keys = Array.from(secretMap.keys());
             const minKey = Math.min(...keys);
             for(let i = minKey; i < minKey+secretMap.size; i+=8){
@@ -319,7 +373,7 @@ async function processBlockNumber(
               }
               secret.push(oneByte);
             }
-            // console.log(secret);
+            console.log(secret);
 
             const message = await handleEncryptedMsg(Uint8Array.from(secret),
               myAddr,
@@ -346,9 +400,9 @@ async function processBlockNumber(
           if (mapReceiving.includes(fromAddress)){
             const secretMap = mapSecretMap.get(fromAddress);
             if (secretMap === undefined) return;
-            await mutex.lock();
+            // const unlock = await mutex.lock();
             secretMap.set(transaction.nonce, last2bit&0b1);
-            mutex.unlock();
+            // mutex.unlock(unlock);
             mapSecretMap.set(fromAddress, secretMap);
             console.log(mapSecretMap);
           }
@@ -360,8 +414,15 @@ async function processBlockNumber(
           }
         }
       });
-    }));
-  // console.log("block ", blockNum, "done");
+    }
+    catch{
+      console.log("something err");
+    }
+    finally{
+      semaphore.release();
+    }
+  }));
+  console.log("block ", blockNum, "done");
   return Promise.resolve(blockNum);
 }
 
