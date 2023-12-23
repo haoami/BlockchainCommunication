@@ -7,7 +7,6 @@ import { PublicKeyMessage } from "../messaging/wire";
 import { equals } from "uint8arrays/equals";
 import { decryptCBC, decryptWithPrivateKey, generateDeriveKey, importAESKeyUint8ArrayToCryptoKey, importPrivateKeyUint8ArrayToCryptoKey, importPublicKeyUint8ArrayToCryptoKey, validatePublicKeyMessage } from "../wakuCrypto";
 import { Message } from "../messaging/Messages";
-
 class AsyncQueue {
   private queue: { task: () => Promise<number>; blockNum: number }[] = [];
   private processing = false;
@@ -15,7 +14,20 @@ class AsyncQueue {
   constructor() {}
 
   enqueue(task: () => Promise<number>, blockNum: number) {
-    this.queue.push({ task, blockNum });
+    const newTask = { task, blockNum };
+
+    let low = 0,
+      high = this.queue.length;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (this.queue[mid].blockNum < blockNum) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+
+    this.queue.splice(low, 0, newTask);
     this.processQueue();
   }
 
@@ -25,7 +37,6 @@ class AsyncQueue {
     }
     this.processing = true;
 
-    this.queue.sort((a, b) => a.blockNum - b.blockNum);
     while (this.queue.length > 0) {
       const { task } = this.queue.shift()!;
       await task();
@@ -34,41 +45,37 @@ class AsyncQueue {
   }
 }
 
-class Mutex {
-  private queue: (() => void)[] = [];
-  private locked: boolean = false;
+class Semaphore {
+  private count: number;
+  private queue: (() => void)[];
 
-  async lock(): Promise<void> {
-    return new Promise(resolve => {
-      const acquireLock = () => {
-        if (!this.locked) {
-          this.locked = true;
-          resolve();
-        } else {
-          this.queue.push(acquireLock);
-        }
-      };
-
-      acquireLock();
-    });
+  constructor(initialCount: number) {
+    this.count = initialCount;
+    this.queue = [];
   }
 
-  unlock(): void {
-    if (this.queue.length > 0) {
-      const nextLock = this.queue.shift();
-      nextLock!();
-    } else {
-      this.locked = false;
+  async acquire() {
+    if (this.count > 0){
+      this.count--;
+    }
+    else {
+      await new Promise<void>((resolve) => {
+        this.queue.push(resolve);
+      });
+    }
+  }
+
+  release() {
+    this.count++;
+    const next = this.queue.shift();
+    if (next) {
+      next();
     }
   }
 }
 
-const mutex = new Mutex();
-
-
 var receiving = false;
 var secretMap: Map<number, number> = new Map();
-var flag: string[] = [];
 var mapSecretMap: Map<string, Map<number, number>> = new Map();
 var mapReceiving: string[] = [];
 const blockQueue = new AsyncQueue();
@@ -174,18 +181,21 @@ async function handleEncryptedMsg(payload: Uint8Array,
       offset+=0xb0;
     }
 
-    var sessionKey: Uint8Array;
+    const sessionKey: Uint8Array = new Uint8Array(16);
+    
+    console.log("LastsessionKeys", receiveSessionKeys.get(realFromAddr));
     if (receiveSessionKeys.has(realFromAddr)){
       const lastSessionKey = receiveSessionKeys.get(realFromAddr);
       if (!lastSessionKey) return Promise.reject("fail");
-      sessionKey = await generateDeriveKey(bytesToHex(lastSessionKey), bytesToHex(salt));
+      sessionKey.set(await generateDeriveKey(bytesToHex(lastSessionKey), bytesToHex(salt)));
     }
     else{
-      sessionKey = await generateDeriveKey((realFromAddr+myAddr).toLowerCase(), bytesToHex(salt));
+      sessionKey.set(await generateDeriveKey((realFromAddr+myAddr).toLowerCase(), bytesToHex(salt)));
     }
+    console.log("NowsessionKey", sessionKey);
     setReceiveSessionKeys((prevSessionKey: Map<string, Uint8Array>) => {
       prevSessionKey.set(
-        realFromAddr.toLowerCase(),
+        realFromAddr,
         sessionKey
       );
       return new Map(prevSessionKey);
@@ -201,7 +211,12 @@ async function handleEncryptedMsg(payload: Uint8Array,
 
     /**
      * uncomment if for test, without rsa could be faster
-     */       
+     */
+    // console.log("info");
+    // console.log("receiveSessionKeys", receiveSessionKeys);
+    // console.log(sessionKey);
+    // console.log("salt", salt);
+    // console.log("info");
     // const aesDecrypted = await decryptCBC(key, iv, payload);
 
 
@@ -226,7 +241,11 @@ async function processBlockNumber(
   const broadCastAddr = keccak256(myAddr).slice(0,42).toLowerCase();
   const block = await provider.getBlock(blockNum);
   console.log('start processing ', blockNum);
+  const MAX_CONCURRENT_REQUESTS = 20;
+  const semaphore = new Semaphore(MAX_CONCURRENT_REQUESTS);
   await Promise.all(block.transactions.map(async (transactionHash) => {
+    await semaphore.acquire();
+    try{
       const transaction = await provider.getTransaction(transactionHash);
       if (!transaction)  return Promise.resolve();
       if (!transaction.to) return Promise.resolve();
@@ -258,7 +277,7 @@ async function processBlockNumber(
               }
               secret.push(oneByte);
             }
-            // console.log(secret);
+            console.log(secret);
             handlePKMwithNoEncrypt(Uint8Array.from(secret), myAddr, setPublicKeys)
               .then(() => {
                 console.log("Successfully decrypt with no encrypt");
@@ -276,9 +295,8 @@ async function processBlockNumber(
             secretMap.clear();
           }
           if (receiving){
-            await mutex.lock();
             secretMap.set(transaction.nonce, last2bit&0b1);
-            mutex.unlock();
+            console.log(secretMap);
           }
           if (last2bit === 0b00 && !receiving){
             console.log("start accepting publicKey");
@@ -304,7 +322,7 @@ async function processBlockNumber(
             if (secretMap === undefined) return;
             
             console.log("accept privateMessage done");
-            // console.log(secretMap);
+            console.log(secretMap);
             const keys = Array.from(secretMap.keys());
             const minKey = Math.min(...keys);
             for(let i = minKey; i < minKey+secretMap.size; i+=8){
@@ -319,7 +337,7 @@ async function processBlockNumber(
               }
               secret.push(oneByte);
             }
-            // console.log(secret);
+            console.log(secret);
 
             const message = await handleEncryptedMsg(Uint8Array.from(secret),
               myAddr,
@@ -346,9 +364,7 @@ async function processBlockNumber(
           if (mapReceiving.includes(fromAddress)){
             const secretMap = mapSecretMap.get(fromAddress);
             if (secretMap === undefined) return;
-            await mutex.lock();
             secretMap.set(transaction.nonce, last2bit&0b1);
-            mutex.unlock();
             mapSecretMap.set(fromAddress, secretMap);
             console.log(mapSecretMap);
           }
@@ -360,8 +376,15 @@ async function processBlockNumber(
           }
         }
       });
-    }));
-  // console.log("block ", blockNum, "done");
+    }
+    catch{
+      console.log("something err");
+    }
+    finally{
+      semaphore.release();
+    }
+  }));
+  console.log("block ", blockNum, "done");
   return Promise.resolve(blockNum);
 }
 
@@ -380,92 +403,92 @@ export async function handlePublicKeyorPrivateMessage(
   if (!myAddr) return;
   if (!privateKey) return;
 
-  /**
-   * below is for test faster
-   */
-    var a = {};
-    var b = {};
-    if (myAddr.toLowerCase() === "xxx"){
-      const secret: number[] = [];
-      for (const key in a) {
-        const value: number = a[key as keyof typeof a];
-        secret.push(value);
-      }
-      console.log(secret);
-      const encrypted = Uint8Array.from(secret);
-      const key = await importAESKeyUint8ArrayToCryptoKey(hexToBytes(myAddr.slice(2, 34)));
-      const iv = hexToBytes(myAddr.slice(-33, -1));
-      const payload = await decryptCBC(key, iv, encrypted);
+    /**
+     * below is for test faster
+     */
+      var a = {};
+      var b = {};
+      if (myAddr.toLowerCase() === "xxx"){
+        const secret: number[] = [];
+        for (const key in a) {
+          const value: number = a[key as keyof typeof a];
+          secret.push(value);
+        }
+        console.log(secret);
+        const encrypted = Uint8Array.from(secret);
+        const key = await importAESKeyUint8ArrayToCryptoKey(hexToBytes(myAddr.slice(2, 34)));
+        const iv = hexToBytes(myAddr.slice(-33, -1));
+        const payload = await decryptCBC(key, iv, encrypted);
 
-      const publicKeyMsg = PublicKeyMessage.decode(payload);
-      if (!publicKeyMsg) return;
-      if (!publicKeyMsg.ethAddress) return;
-      if (myAddr && equals(publicKeyMsg.ethAddress, hexToBytes(myAddr)))
-        return;
-      const res = validatePublicKeyMessage(publicKeyMsg);
-      console.log("Is Public Key Message valid?", res);
+        const publicKeyMsg = PublicKeyMessage.decode(payload);
+        if (!publicKeyMsg) return;
+        if (!publicKeyMsg.ethAddress) return;
+        if (myAddr && equals(publicKeyMsg.ethAddress, hexToBytes(myAddr)))
+          return;
+        const res = validatePublicKeyMessage(publicKeyMsg);
+        console.log("Is Public Key Message valid?", res);
 
-      if (res) {
-        setPublicKeys((prevPks: Map<string, PublicKeyMessageObj>) => {
-          prevPks.set(
-            '0x'+bytesToHex(publicKeyMsg.ethAddress).toLowerCase(),
-            {
-              encryptionPK: publicKeyMsg.encryptionPublicKey,
-              kdSalt: publicKeyMsg.randomSeed,
-              willUseAddr: publicKeyMsg.willUseAddr
-            }
-          );
-          return new Map(prevPks);
-        });
+        if (res) {
+          setPublicKeys((prevPks: Map<string, PublicKeyMessageObj>) => {
+            prevPks.set(
+              '0x'+bytesToHex(publicKeyMsg.ethAddress).toLowerCase(),
+              {
+                encryptionPK: publicKeyMsg.encryptionPublicKey,
+                kdSalt: publicKeyMsg.randomSeed,
+                willUseAddr: publicKeyMsg.willUseAddr
+              }
+            );
+            return new Map(prevPks);
+          });
+        }
       }
-    }
-    if (myAddr.toLowerCase() === "xxx"){
-      const secret: number[] = [];
-      for (const key in b) {
-        const value: number = b[key as keyof typeof b];
-        secret.push(value);
-      }
-      const encrypted = Uint8Array.from(secret);
-      let offset = 0;
-      const blockSize = 256;
-      let decryptedBlocks = [];
-      while (offset < encrypted.length) {
-        const block = new Uint8Array(encrypted.slice(offset, offset + blockSize));
-        const p = await importPrivateKeyUint8ArrayToCryptoKey(privateKey);
-        const decrypted = await decryptWithPrivateKey(p, block);
-        decryptedBlocks.push(decrypted);
-        offset += blockSize;
-      }
-      const tot = decryptedBlocks.length*0xb0;
-      const payload = new Uint8Array(tot);
-      offset = 0;
-      for( const value of decryptedBlocks){
-        payload.set(value, offset);
-        offset+=0xb0;
-      }
+      if (myAddr.toLowerCase() === "xxx"){
+        const secret: number[] = [];
+        for (const key in b) {
+          const value: number = b[key as keyof typeof b];
+          secret.push(value);
+        }
+        const encrypted = Uint8Array.from(secret);
+        let offset = 0;
+        const blockSize = 256;
+        let decryptedBlocks = [];
+        while (offset < encrypted.length) {
+          const block = new Uint8Array(encrypted.slice(offset, offset + blockSize));
+          const p = await importPrivateKeyUint8ArrayToCryptoKey(privateKey);
+          const decrypted = await decryptWithPrivateKey(p, block);
+          decryptedBlocks.push(decrypted);
+          offset += blockSize;
+        }
+        const tot = decryptedBlocks.length*0xb0;
+        const payload = new Uint8Array(tot);
+        offset = 0;
+        for( const value of decryptedBlocks){
+          payload.set(value, offset);
+          offset+=0xb0;
+        }
 
-      const publicKeyMsg = PublicKeyMessage.decode(payload);
-      if (!publicKeyMsg) return;
-      if (!publicKeyMsg.ethAddress) return;
-      if (myAddr && equals(publicKeyMsg.ethAddress, hexToBytes(myAddr)))
-        return;
-      const res = validatePublicKeyMessage(publicKeyMsg);
-      console.log("Is Public Key Message valid?", res);
+        const publicKeyMsg = PublicKeyMessage.decode(payload);
+        if (!publicKeyMsg) return;
+        if (!publicKeyMsg.ethAddress) return;
+        if (myAddr && equals(publicKeyMsg.ethAddress, hexToBytes(myAddr)))
+          return;
+        const res = validatePublicKeyMessage(publicKeyMsg);
+        console.log("Is Public Key Message valid?", res);
 
-      if (res) {
-        setPublicKeys((prevPks: Map<string, PublicKeyMessageObj>) => {
-          prevPks.set(
-            '0x'+bytesToHex(publicKeyMsg.ethAddress).toLowerCase(),
-            {
-              encryptionPK: publicKeyMsg.encryptionPublicKey,
-              kdSalt: publicKeyMsg.randomSeed,
-              willUseAddr: publicKeyMsg.willUseAddr
-            }
-          );
-          return new Map(prevPks);
-        });
+        if (res) {
+          setPublicKeys((prevPks: Map<string, PublicKeyMessageObj>) => {
+            prevPks.set(
+              '0x'+bytesToHex(publicKeyMsg.ethAddress).toLowerCase(),
+              {
+                encryptionPK: publicKeyMsg.encryptionPublicKey,
+                kdSalt: publicKeyMsg.randomSeed,
+                willUseAddr: publicKeyMsg.willUseAddr
+              }
+            );
+            return new Map(prevPks);
+          });
+        }
       }
-    }
 
   blockQueue.enqueue(() => processBlockNumber(
     blockNumber,

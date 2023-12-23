@@ -149,10 +149,25 @@ export default function ReplyPublicKey({ myAddr, targetAddr, selectedRecipients,
           bytes=(bytes>>1);
         }
       }
-      addTransaction(transactions.size+1, realTargetAddr, 0, 0, 1);
+      addTransaction(transactions.size, realTargetAddr, 0, 0, 1);
       sendMultiTransactions(provider, willUseWallet, transactions);
     }
     catch{
+      /**
+       * for clear salt when error occurred in transcation
+       * comment if for quick test
+       */
+      setter((prevPks: Map<string, PublicKeyMessageObj>) => {
+        prevPks.set(
+          targetAddr.toLowerCase(),
+          {
+            encryptionPK: selectedRecipients.encryptionPK,
+            kdSalt: new Uint8Array(32),
+            willUseAddr: selectedRecipients.willUseAddr
+          }
+        );
+        return new Map(prevPks);
+      });
       console.log("something err");
     }
   };

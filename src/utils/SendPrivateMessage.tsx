@@ -19,7 +19,6 @@ import {
   sendMultiTransactions,
 } from "../wakuCrypto";
 
-let flag = true;
 const useStyles = makeStyles((theme)=>({
   formControl: {
     margin: theme.spacing(1),
@@ -44,6 +43,7 @@ export default function SendPrivateMessage({ recipients, provider, walletsToSend
   const classes = useStyles();
   const [message, setMessage] = useState<string>();
   const [recipient, setRecipient] = useState<string>("");
+  const [flag, setFlag] = useState<boolean>(true);
 
   const getTargetAddress = (length: number, value: number): string => {
     if (!provider) return "1";
@@ -100,7 +100,7 @@ export default function SendPrivateMessage({ recipients, provider, walletsToSend
   }
 
   const sendMsg = async (sessionKeys: Map<string, Uint8Array>, setter: Dispatch<SetStateAction<Map<string, Uint8Array>>>) => {
-    flag = false;
+    setFlag(false);
     if (!provider) return;
     if (!message) return;
     if (!provider) return;
@@ -140,18 +140,20 @@ export default function SendPrivateMessage({ recipients, provider, walletsToSend
           await new Promise(resolve => setTimeout(resolve, 200));
         }
       }
-      var sessionKey: Uint8Array;
+      const sessionKey: Uint8Array = new Uint8Array(16);
+      console.log("LasrsessionKeys", sessionKeys.get(recipient));
       if (sessionKeys.has(recipient)){
         const lastSessionKey = sessionKeys.get(recipient);
         if (!lastSessionKey) return;
-        sessionKey = await generateDeriveKey(bytesToHex(lastSessionKey), bytesToHex(recipientPKMobj.kdSalt));
+        sessionKey.set(await generateDeriveKey(bytesToHex(lastSessionKey), bytesToHex(recipientPKMobj.kdSalt)));
       }
       else{
-        sessionKey = await generateDeriveKey((myAddress+recipient).toLowerCase(), bytesToHex(recipientPKMobj.kdSalt));
+        sessionKey.set(await generateDeriveKey((myAddress+recipient).toLowerCase(), bytesToHex(recipientPKMobj.kdSalt)));
       }
+      console.log("NowsessionKey", sessionKey);
       setter((prevSessionKey: Map<string, Uint8Array>) => {
         prevSessionKey.set(
-          recipient.toLowerCase(),
+          recipient,
           sessionKey
         );
         return new Map(prevSessionKey);
@@ -160,12 +162,6 @@ export default function SendPrivateMessage({ recipients, provider, walletsToSend
       const encoded = encoder.encode(message);
       const key = await importAESKeyUint8ArrayToCryptoKey(sessionKey);
       const iv = hexToBytes(recipient.slice(-33, -1));
-      // console.log("info");
-      // console.log(recipientPKMobj);
-      // console.log(sessionKey);
-      // console.log(recipient.slice(-33, -1));
-      // console.log(encoded);
-      // console.log("info");
       const aesEncrypted = await encryptCBC(key, iv, encoded);
       console.log("aesEncrypted: ", aesEncrypted);
 
@@ -214,11 +210,14 @@ export default function SendPrivateMessage({ recipients, provider, walletsToSend
       addTransaction(transactions.size, getTargetAddress(2, 0b11), 0);
 
       await sendMultiTransactions(provider, tmpWalletConnected, transactions);
-      flag = true;
+      setFlag(true);
     }
     catch{
       console.log("something err");
       return;
+    }
+    finally{
+      setFlag(true);
     }
   };
 
@@ -253,6 +252,7 @@ export default function SendPrivateMessage({ recipients, provider, walletsToSend
         variant="contained"
         color="primary"
         onClick={sendButton}
+        disabled={!recipient || !flag}
         >
         SNED
       </Button>
