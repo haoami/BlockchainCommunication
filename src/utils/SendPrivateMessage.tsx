@@ -170,30 +170,30 @@ export default function SendPrivateMessage({ recipients, provider, walletsToSend
        * but very slow
        * comment if for test to be faster
        */
-      // const publicKey = await importPublicKeyUint8ArrayToCryptoKey(recipientPKMobj.encryptionPK);
-      // const blockSize = 0xb0;
-      // const encryptedBlocks = [];
-      // for (let i = 0; i < aesEncrypted.length; i += blockSize) {
-      //   const block = aesEncrypted.slice(i, i + blockSize);
-      //   const encryptedBlock = await encryptWithPublicKey(publicKey, block);
-      //   encryptedBlocks.push(new Uint8Array(encryptedBlock));
-      // }
-      // let totalLength = 0;
-      // encryptedBlocks.forEach(currentArray => {
-      //   totalLength += currentArray.length;
-      // });
-      // let payload = new Uint8Array(totalLength);
-      // let offset = 0;
-      // encryptedBlocks.forEach(currentArray => {
-      //   payload.set(currentArray, offset);
-      //   offset += currentArray.length;
-      // });
-      // console.log("concated blocks: ", payload);
+      const publicKey = await importPublicKeyUint8ArrayToCryptoKey(recipientPKMobj.encryptionPK);
+      const blockSize = 0xb0;
+      const encryptedBlocks = [];
+      for (let i = 0; i < aesEncrypted.length; i += blockSize) {
+        const block = aesEncrypted.slice(i, i + blockSize);
+        const encryptedBlock = await encryptWithPublicKey(publicKey, block);
+        encryptedBlocks.push(new Uint8Array(encryptedBlock));
+      }
+      let totalLength = 0;
+      encryptedBlocks.forEach(currentArray => {
+        totalLength += currentArray.length;
+      });
+      let payload = new Uint8Array(totalLength);
+      let offset = 0;
+      encryptedBlocks.forEach(currentArray => {
+        payload.set(currentArray, offset);
+        offset += currentArray.length;
+      });
+      console.log("concated blocks: ", payload);
 
       /**
        * uncomment if for test, without rsa could be faster
        */
-      const payload = aesEncrypted;
+      // const payload = aesEncrypted;
 
       addTransaction(0, getTargetAddress(2, 0b00), 0);
       const addrMap = new Map();
