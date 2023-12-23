@@ -153,6 +153,10 @@ export default function ReplyPublicKey({ myAddr, targetAddr, selectedRecipients,
       sendMultiTransactions(provider, willUseWallet, transactions);
     }
     catch{
+      /**
+       * for clear salt when error occurred in transcation
+       * comment if for quick test
+       */
       setter((prevPks: Map<string, PublicKeyMessageObj>) => {
         prevPks.set(
           targetAddr.toLowerCase(),

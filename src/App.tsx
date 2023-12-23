@@ -1,6 +1,6 @@
 import "@ethersproject/shims";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import "./App.css";
 import { KeyPair } from "./wakuCrypto";
 import Messages, { Message } from "./messaging/Messages";
@@ -89,6 +89,7 @@ function App() {
   const [address, setAddress] = useState<string>();
 
   const classes = useStyles();
+  const updataedReceiveSessionKeys = useRef(receiveSessionKeys);
 
   let addressDisplay = "";
   if (address) {
@@ -97,6 +98,11 @@ function App() {
       // address.substr(0, 6) + "..." + address.substr(address.length - 4, 4);
   }
 
+  useEffect(() => {
+    console.log("Updated receiveSessionKeys", receiveSessionKeys);
+    updataedReceiveSessionKeys.current = receiveSessionKeys;
+  }, [receiveSessionKeys]);
+
   const handleBlockEvent = (blockNumber: number | undefined) => {
     if (!provider || !address || !encryptionKeyPair) return;
     handlePublicKeyorPrivateMessage(
@@ -104,7 +110,7 @@ function App() {
       provider,
       encryptionKeyPair.privateKey,
       publicKeys,
-      receiveSessionKeys,
+      updataedReceiveSessionKeys.current,
       setReceiveSessionKeys,
       setMessages,
       setPublicKeys,
