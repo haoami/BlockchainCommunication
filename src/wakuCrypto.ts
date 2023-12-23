@@ -292,6 +292,8 @@ export async function sendMultiTransactions(provider: Web3Provider, wallet: Wall
             gasPrice: increasedGasPrice,
           });
           console.log(lastTx);
+          const final = await lastTx.wait();
+          console.log("transaction[-1]: ", final);
       }
     }
     return Promise.resolve(true);

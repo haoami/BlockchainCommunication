@@ -34,7 +34,6 @@ export default function KeyPairHandling({
     generateEncryptionKeyPair()
       .then((keyPair) => {
         setEncryptionKeyPair(keyPair);
-        console.log(keyPair);
       })
       .catch((e) => {
         console.error("Failed to generate Key Pair", e);
